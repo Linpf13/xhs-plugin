@@ -100,6 +100,66 @@ header h1 {
   background: #d3d7dc;
 }
 
+/* AI 自动归类跑在首页：顶部一条进度，跑完自动收起、弹出结果面板。
+ * 用蓝紫区别于「取消收藏」的红色进度条，两条同时出现也不会认错。 */
+.aiprog {
+  display: none;
+  margin: 0 16px 9px;
+  padding: 9px 11px;
+  border-radius: 10px;
+  background: #f5f5ff;
+  border: 1px solid #e6e6fa;
+}
+
+.aiprog.on {
+  display: block;
+}
+
+.aiprog-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: #565672;
+}
+
+.aiprog-head span {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.aiprog-head button {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  border: 1px solid #d8d8f0;
+  background: #fff;
+  color: #5b5bd6;
+  cursor: pointer;
+}
+
+.aiprog-bar {
+  height: 4px;
+  margin-top: 7px;
+  border-radius: 999px;
+  background: #e7e7f8;
+  overflow: hidden;
+}
+
+.aiprog-bar > i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: 999px;
+  background: #5b5bd6;
+  transition: width 0.25s ease;
+}
+
 .status.live::before {
   background: #ff2442;
   animation: pulse 1.2s ease-in-out infinite;
@@ -809,22 +869,6 @@ body.picking .item .tick {
 
 .target-grid button.on small {
   color: #ff8090;
-}
-
-#targetCustom {
-  width: 100%;
-  font: inherit;
-  font-size: 13px;
-  padding: 8px 10px;
-  border-radius: 9px;
-  border: 1px solid #e3e5e8;
-  background: #fff;
-  color: #1f2329;
-}
-
-#targetCustom:focus {
-  outline: none;
-  border-color: #ffb3bd;
 }
 
 #targetStop[hidden] {

@@ -396,15 +396,6 @@ await sleep(1700);
 
 ok("AI 直接读已存的 Key，不会偷偷改写 storage", keyStore.deepseekKey === "sk-testtesttest1234", String(keyStore.deepseekKey));
 
-await $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-await sleep(60);
-$$('.menu-item').find((b) => b.dataset.menu === "ai").dispatchEvent(
-  new window.MouseEvent("click", { bubbles: true })
-);
-await sleep(150);
-ok("AI 面板已打开", $("#ai").classList.contains("on"));
-ok("会说明本次处理几条", /3/.test($("#aiDesc").textContent), $("#aiDesc").textContent.slice(0, 40));
-
 let fetchCalls = [];
 global.fetch = async (url, init) => {
   const body = JSON.parse(init.body);
@@ -422,26 +413,24 @@ global.fetch = async (url, init) => {
   return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
 };
 
-$("#aiStart").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(60);
+ok("没跑之前首页没有 AI 进度条", !$("#aiprog").classList.contains("on"));
+$$('.menu-item').find((b) => b.dataset.menu === "ai").dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true })
+);
+await sleep(80);
+ok(
+  "点「AI 自动归类」直接开跑，不用再点「开始分析」",
+  fetchCalls.length > 0 || $("#aiprog").classList.contains("on"),
+  "fetch=" + fetchCalls.length
+);
 await sleep(400);
+ok("跑完自动弹出结果面板", $("#ai").classList.contains("on"));
+ok("结果面板的按钮变成「重新分析」", $("#aiStart").textContent === "重新分析", $("#aiStart").textContent);
+ok("跑完首页进度条收起", !$("#aiprog").classList.contains("on"));
+ok("说明写了这次分析了几条", /3 条里/.test($("#aiDesc").textContent), $("#aiDesc").textContent.slice(0, 40));
 
-ok(
-  "先规划后分类，一共调了两次 DeepSeek",
-  fetchCalls.length === 2 && fetchCalls.every((c) => /api\.deepseek\.com/.test(c.url)),
-  String(fetchCalls.length)
-);
-ok(
-  "规划调用只发了标题",
-  /设计一套文件夹/.test(fetchCalls[0].body.messages[0].content) &&
-    fetchCalls[0].body.messages[1].content.includes("租房改造") &&
-    !JSON.stringify(fetchCalls[0].body).includes("xsec"),
-  fetchCalls[0].body.messages[1].content.slice(0, 30)
-);
-ok(
-  "分类调用只发了标题作者，没发封面链接",
-  !JSON.stringify(fetchCalls[1].body).includes("xsec") && fetchCalls[1].body.messages[1].content.includes("租房改造"),
-  fetchCalls[1].body.messages[1].content.slice(0, 30)
-);
 ok("结果列出 3 条建议", $$("#aiList .sug").length === 3, $$("#aiList .sug").length + " 条");
 ok(
   "三条全部默认勾选（AI 规划的新文件夹也算）",
@@ -472,12 +461,14 @@ await sleep(60);
 $$('.menu-item').find((b) => b.dataset.menu === "ai").dispatchEvent(
   new window.MouseEvent("click", { bubbles: true })
 );
-await sleep(120);
-$("#aiStart").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-await sleep(300);
-ok("401 会说 Key 无效", /Key 无效/.test($("#aiDesc").textContent), $("#aiDesc").textContent.slice(0, 40));
-ok("出错时不勾选任何条目", $$('#aiList input[type="checkbox"]').filter((c) => c.checked).length === 0);
-if ($("#ai").classList.contains("on")) $("#aiBack").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(450);
+ok("401 会说 Key 无效", /Key 无效/.test($("#toast").textContent), $("#toast").textContent.trim());
+ok(
+  "出错时不弹结果面板、不勾选任何条目",
+  !$("#ai").classList.contains("on") &&
+    $$('#aiList input[type="checkbox"]').filter((c) => c.checked).length === 0
+);
+ok("出错后首页进度条收起", !$("#aiprog").classList.contains("on"));
 
 /* --- 14. 设置里能改 Key --- */
 await $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
@@ -515,8 +506,10 @@ await db.saveNotes([
 await db.putFolder({ id: "g9", name: "职场成长", createdAt: 9 });
 await sleep(1700);
 
+const section15Calls = [];
 global.fetch = async (url, init) => {
   const body = JSON.parse(init.body);
+  section15Calls.push(body);
   const isPlan = /设计一套文件夹/.test(body.messages[0].content);
   const content = isPlan
     ? JSON.stringify({ folders: ["职场成长", "AI学习"] })
@@ -529,11 +522,12 @@ await sleep(60);
 $$('.menu-item').find((b) => b.dataset.menu === "ai").dispatchEvent(
   new window.MouseEvent("click", { bubbles: true })
 );
-await sleep(150);
-ok("说明里列出 AI 已知的文件夹", /职场成长/.test($("#aiDesc").textContent), $("#aiDesc").textContent.slice(0, 60));
-
-$("#aiStart").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-await sleep(400);
+await sleep(450);
+ok(
+  "规划请求里带着现有文件夹（AI 才知道该复用哪些）",
+  section15Calls.length > 0 && /职场成长/.test(section15Calls[0].messages[1].content),
+  (section15Calls[0] || { messages: [{}, { content: "" }] }).messages[1].content.slice(0, 40)
+);
 ok(
   "建议行写着新建文件夹名",
   /新建文件夹「AI学习」/.test($("#aiList").textContent),
@@ -619,12 +613,8 @@ await sleep(60);
 $$('.menu-item').find((b) => b.dataset.menu === "ai").dispatchEvent(
   new window.MouseEvent("click", { bubbles: true })
 );
-await sleep(150);
-ok("没有文件夹也能打开 AI 面板（不再要求先手动建）", $("#ai").classList.contains("on"));
-ok("说明里写明 AI 会自己创建", /自己创建/.test($("#aiDesc").textContent), $("#aiDesc").textContent.slice(0, 60));
-
-$("#aiStart").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-await sleep(400);
+await sleep(450);
+ok("一个文件夹都没有也能直接跑（不再要求先手动建）", $("#ai").classList.contains("on"));
 ok(
   "建议行是新文件夹",
   /新建文件夹「烘焙美食」/.test($("#aiList").textContent),
@@ -665,11 +655,7 @@ await sleep(60);
 $$('.menu-item').find((b) => b.dataset.menu === "ai").dispatchEvent(
   new window.MouseEvent("click", { bubbles: true })
 );
-await sleep(150);
-ok("AI 说明里告知文件夹已满", /已满 10 个|只从现有文件夹/.test($("#aiDesc").textContent), $("#aiDesc").textContent.slice(0, 80));
-
-$("#aiStart").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-await sleep(400);
+await sleep(450);
 ok("满额时新建建议被降级为无建议", $$('#aiList input[type="checkbox"]')[0].disabled === true, $("#aiList").textContent.trim().slice(0, 40));
 if ($("#ai").classList.contains("on")) $("#aiBack").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
@@ -1550,36 +1536,39 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
   ok("点停止会下发 stop 指令", tabsSent.some((m) => m.type === "xhsfav-stop"));
   ok("停止后状态栏说明已停止", /已停止采集/.test($("#status").textContent), $("#status").textContent);
 
-  /* 自定义条数：越界会被夹到 20~5000 */
+  /* 按需求去掉自定义：只有四个预设，点完立刻开跑，没有第二个「开始」按钮 */
+  ok("面板里没有自定义条数输入框", !$("#targetCustom") && !$("#targetGo"));
+  ok("面板底部没有多余按钮（选完即开跑）", !$("#collect .sheet-foot"));
+
+  const beforeStart = tabsSent.filter((m) => m.type === "xhsfav-start").length;
   $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await sleep(60);
   $$(".menu-item").find((b) => b.dataset.menu === "collect").dispatchEvent(
     new window.MouseEvent("click", { bubbles: true })
   );
   await sleep(120);
-  $("#targetCustom").value = "99999";
-  $("#targetGo").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  $$("#targetGrid button").find((b) => b.dataset.target === "1000").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
   await sleep(150);
   ok(
-    "自定义超上限被夹到 5000",
-    (tabsSent.filter((m) => m.type === "xhsfav-start").pop() || {}).target === 5000,
+    "点 1000 立刻按 1000 条开跑",
+    (tabsSent.filter((m) => m.type === "xhsfav-start").pop() || {}).target === 1000,
     String((tabsSent.filter((m) => m.type === "xhsfav-start").pop() || {}).target)
   );
+  ok(
+    "一次点击只下发一条开跑指令（不需要再点第二个按钮）",
+    tabsSent.filter((m) => m.type === "xhsfav-start").length === beforeStart + 1,
+    String(tabsSent.filter((m) => m.type === "xhsfav-start").length - beforeStart)
+  );
 
-  const before = tabsSent.length;
+  /* 返回键回到「更多操作」，不是首页 */
   $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await sleep(60);
   $$(".menu-item").find((b) => b.dataset.menu === "collect").dispatchEvent(
     new window.MouseEvent("click", { bubbles: true })
   );
   await sleep(120);
-  $("#targetCustom").value = "";
-  $("#targetGo").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  await sleep(120);
-  ok("没填自定义条数时不乱开跑", tabsSent.filter((m) => m.type === "xhsfav-start").length === 2);
-
-  /* 返回键回到「更多操作」，不是首页 */
-  $("#targetCustom").value = "800";
   $("#collectBack").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await sleep(80);
   ok("条数面板返回落到更多操作", $("#menu").classList.contains("on") && !$("#collect").classList.contains("on"));
@@ -1716,7 +1705,7 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
   ok("余额不足直接抛错", /余额不足/.test(thrown2), thrown2);
 }
 
-/* --- 27. 未分类超过 500 条时面板要说清「这一轮跑多少、余下多少」 --- */
+/* --- 27. AI 归类：不弹中间面板、直接跑 500 条，进度在首页 --- */
 {
   await db.clearAll();
   const manyNotes = Array.from({ length: 505 }, (_, i) => ({
@@ -1733,16 +1722,52 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
   }));
   await db.saveNotes(manyNotes);
   await sleep(1700);
+
+  const noteCount = (body) => {
+    const tail = String(body.messages[1].content).split("笔记：")[1] || "";
+    return tail.split("\n").filter((l) => /^\d+\./.test(l)).length;
+  };
+  let sent27 = 0;
+  global.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    await sleep(30); /* 拖一点时间，好观察「跑的时候进度条在首页」 */
+    const isPlan = /设计一套文件夹/.test(body.messages[0].content);
+    const n = isPlan ? 0 : noteCount(body);
+    if (!isPlan) sent27 += n;
+    const content = isPlan
+      ? JSON.stringify({ folders: ["批量夹"] })
+      : JSON.stringify({
+          items: Array.from({ length: n }, (_, i) => ({ i: i + 1, f: "批量夹", c: 80 }))
+        });
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content } }] }) };
+  };
+
   $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await sleep(60);
   $$(".menu-item").find((b) => b.dataset.menu === "ai").dispatchEvent(
     new window.MouseEvent("click", { bubbles: true })
   );
-  await sleep(150);
-  const desc = $("#aiDesc").textContent;
-  ok("提示本次处理 500 条", /500/.test(desc), desc.slice(0, 60));
-  ok("提示余下 5 条下次继续", /余下\s*5\s*条/.test(desc), desc.replace(/\s+/g, " ").slice(0, 90));
-  ok("不再显示「本次处理前 60 条」的老上限", !/本次处理前 60 条/.test(desc));
+  await sleep(130);
+  ok("跑起来时进度条出现在首页面板", $("#aiprog").classList.contains("on"));
+  ok(
+    "进度文案带条数 / 总数",
+    /\d+ \/ \d+/.test($("#aiprogText").textContent),
+    $("#aiprogText").textContent
+  );
+  ok("跑的过程中不弹结果面板", !$("#ai").classList.contains("on"));
+
+  await sleep(2500);
+  ok("跑完自动弹结果面板", $("#ai").classList.contains("on"));
+  ok("跑完首页进度条收起", !$("#aiprog").classList.contains("on"));
+  ok("单轮只跑 500 条（多的留到下次）", sent27 === 500, String(sent27));
+  ok("结果列表 500 行", $$("#aiList .sug").length === 500, $$("#aiList .sug").length + " 行");
+  ok("说明写的是 500 条", /500 条里/.test($("#aiDesc").textContent), $("#aiDesc").textContent.slice(0, 30));
+  ok("确认前不写库（505 条仍未分类）", (await db.getAllNotes()).filter((n) => !n.folder).length === 505);
+  ok(
+    "没有「选数量 / 余下 N 条」的旧文案",
+    !/本次处理前|余下/.test($("#aiDesc").textContent),
+    $("#aiDesc").textContent.slice(0, 40)
+  );
   await db.clearAll();
 }
 
@@ -1754,7 +1779,12 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
     /\.target-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr 1fr/.test(css28)
   );
   ok("选中的预设高亮", /\.target-grid button\.on\s*\{[\s\S]*?border-color:\s*#ff2442/.test(css28));
-  ok("自定义输入框吃满一行", /#targetCustom\s*\{[\s\S]*?width:\s*100%/.test(css28));
+  ok("首页 AI 进度条默认不占位", /\.aiprog\s*\{[\s\S]*?display:\s*none/.test(css28));
+  ok("跑起来才显示", /\.aiprog\.on\s*\{[\s\S]*?display:\s*block/.test(css28));
+  ok(
+    "进度文字吃掉剩余宽度（停止按钮不被挤）",
+    /\.aiprog-head span\s*\{[\s\S]*?flex:\s*1 1 auto/.test(css28)
+  );
   ok("停止按钮隐藏时真的不占位", /#targetStop\[hidden\]\s*\{[\s\S]*?display:\s*none/.test(css28));
 }
 

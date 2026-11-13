@@ -349,11 +349,8 @@ function renderTip() {
     if (useAi) {
       state.tipClosed = true;
       renderTip();
-      await openAi();
-      if ($("#ai").classList.contains("on") && !aiRunning) {
-        toast(`未分类 ${none} 条，交给 AI 规划文件夹…`, 2600);
-        runAi();
-      }
+      toast(`未分类 ${none} 条，交给 AI 规划文件夹…`, 2600);
+      startAi({ fromMenu: false });
       return;
     }
     state.view = "none";
@@ -655,7 +652,7 @@ $("#menu").addEventListener("click", async (e) => {
     return;
   }
 
-  if (act === "ai") return openAi(true);
+  if (act === "ai") return startAi({ fromMenu: true });
 
   if (act === "settings") return openSettings();
 
@@ -682,19 +679,6 @@ $("#targetGrid").addEventListener("click", (e) => {
   const btn = e.target.closest("button[data-target]");
   if (!btn) return;
   startCollect(Number(btn.dataset.target));
-});
-
-$("#targetGo").addEventListener("click", () => {
-  const v = clampTarget($("#targetCustom").value);
-  if (!v) return toast("先填个条数，比如 2000", 2400);
-  startCollect(v);
-});
-
-$("#targetCustom").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    e.preventDefault();
-    $("#targetGo").click();
-  }
 });
 
 $("#targetStop").addEventListener("click", stopCollect);
@@ -908,16 +892,33 @@ async function unfavNotes(ids, label) {
 
 const KEY_STORE = "deepseekKey";
 const aiDescEl = $("#aiDesc");
-const aiBarEl = $("#aiBar");
-const aiFillEl = aiBarEl.querySelector("i");
 const aiListEl = $("#aiList");
 const aiToolsEl = $("#aiTools");
 const aiStartEl = $("#aiStart");
 const aiConfirmEl = $("#aiConfirm");
 
+/* 进度条放在首页（不在浮层里）：点完「AI 自动归类」就把浮层收起，
+ * 边跑边在首页看进度，跑完再弹结果让人确认。 */
+const aiProgEl = $("#aiprog");
+const aiProgTextEl = $("#aiprogText");
+const aiProgFillEl = $("#aiprogFill");
+
 let aiResults = [];
 let aiRunning = false;
 let aiCtrl = null;
+/* 结果面板该退回哪：'#menu' 或 null（直接回首页） */
+let aiParentSel = null;
+
+function showAiProg(text, pct) {
+  aiProgEl.classList.add("on");
+  aiProgTextEl.textContent = text;
+  aiProgFillEl.style.width = Math.max(0, Math.min(100, Number(pct) || 0)) + "%";
+}
+
+function hideAiProg() {
+  aiProgEl.classList.remove("on");
+  aiProgFillEl.style.width = "0%";
+}
 
 function hasKeyStore() {
   return typeof chrome !== "undefined" && chrome.storage && chrome.storage.local;
@@ -1036,66 +1037,40 @@ function syncAiConfirm() {
 
 aiListEl.addEventListener("change", syncAiConfirm);
 
-async function openAi(fromMenu = false) {
-  const pending = state.notes.filter((n) => !n.folder).length;
-  if (!pending) {
-    toast("没有未分类的收藏了");
+/* 点「AI 自动归类」/ 提示条「AI 自动整理 →」都走这里：
+ * 不弹中间面板、不选条数，直接按上限 500 条开跑，进度显示在首页。 */
+async function startAi({ fromMenu = false } = {}) {
+  if (aiRunning) {
+    toast("AI 正在跑，首页有进度条，等它跑完", 2600);
     return;
   }
-  const key = await getKey();
-  if (!key) {
-    openSettings();
-    toast("先填 DeepSeek Key", 2600);
-    return;
-  }
-  aiResults = [];
-  renderAiList();
-  aiToolsEl.hidden = true;
-  aiBarEl.classList.remove("on");
-  aiFillEl.style.width = "0%";
-  aiStartEl.textContent = "开始分析";
-  aiConfirmEl.disabled = true;
-  aiConfirmEl.textContent = "确认归类";
-  const capped = Math.min(pending, MAX_PER_RUN);
-  const over = pending - capped;
-  const slots = Math.max(0, MAX_FOLDERS - state.folders.length);
-  aiDescEl.innerHTML = `有 <b>${pending}</b> 条未分类，本次处理前 <b>${capped}</b> 条。<br>` +
-    (over
-      ? `余下 <b>${over}</b> 条这一轮先不动，跑完再点一次「重新分析」接着归类。<br>`
-      : "") +
-    (state.folders.length
-      ? `AI 会结合现有文件夹（${state.folders.map((f) => esc(f.name)).join("、")}）规划方案。`
-      : `你还没有任何文件夹——AI 会<b>自己创建</b>一套，不用手动建。`) +
-    (slots
-      ? `缺的文件夹会自动新建（总数不超过 ${MAX_FOLDERS} 个）。`
-      : `文件夹已满 ${MAX_FOLDERS} 个，这次只从现有文件夹里选。`) +
-    `<br>建议会<b>全部自动勾选</b>，点一次「确认归类」就完成；个别不想动的先勾掉。<b>不会改动小红书</b>。`;
-  openChildSheet($("#ai"), fromMenu ? "#menu" : null);
-}
-
-async function runAi() {
   const pending = state.notes
     .filter((n) => !n.folder)
     .sort((a, b) => (b.firstSeen || 0) - (a.firstSeen || 0))
     .slice(0, MAX_PER_RUN);
   if (!pending.length) return toast("没有未分类的收藏了");
 
+  const key = await getKey();
+  if (!key) {
+    openSettings();
+    toast("先填 DeepSeek Key", 2600);
+    return;
+  }
+  aiParentSel = fromMenu ? "#menu" : null;
+  closeSheets();
+  await runAi(pending, key);
+}
+
+async function runAi(pending, key) {
   aiCtrl = new AbortController();
   aiRunning = true;
   aiResults = [];
-  renderAiList();
-  aiToolsEl.hidden = true;
-  aiConfirmEl.disabled = true;
-  aiConfirmEl.textContent = "确认归类";
-  aiStartEl.textContent = "停止";
-  aiBarEl.classList.add("on");
-  aiFillEl.style.width = "0%";
-  aiDescEl.textContent = "AI 正在看这批收藏，规划文件夹…";
+  showAiProg(`AI 正在规划文件夹…（共 ${pending.length} 条）`, 3);
 
   try {
     let aiFailed = 0;
     const res = await classify({
-      apiKey: await getKey(),
+      apiKey: key,
       notes: pending,
       folders: state.folders,
       signal: aiCtrl.signal,
@@ -1104,38 +1079,29 @@ async function runAi() {
           aiFailed = failed || 0;
           return;
         }
-        aiFillEl.style.width = Math.round((done / Math.max(total, 1)) * 100) + "%";
-        aiDescEl.textContent =
-          phase === "plan"
-            ? `AI 正在看这 ${total} 条收藏，规划文件夹…`
-            : `分类中 ${done} / ${total}…` +
-              (batches > 1 ? `（第 ${batch} / ${batches} 批）` : "");
+        if (phase === "plan") {
+          showAiProg(`AI 正在规划文件夹…（共 ${total} 条）`, 3);
+          return;
+        }
+        const pct = Math.max(3, Math.round((done / Math.max(total, 1)) * 100));
+        showAiProg(
+          `AI 分类中 ${done} / ${total}` + (batches > 1 ? ` · 第 ${batch} / ${batches} 批` : ""),
+          pct
+        );
       }
     });
-    aiResults = res;
-    renderAiList();
-    const hit = res.filter((r) => r.folderId || r.newFolder).length;
-    const fresh = new Set(res.filter((r) => r.newFolder).map((r) => r.newFolder));
-    aiFillEl.style.width = "100%";
-    aiDescEl.innerHTML =
-      `分析完成：${res.length} 条里 <b>${hit}</b> 条给出归属` +
-      (fresh.size ? `（新建文件夹：${[...fresh].map(esc).join("、")}）` : "") +
-      `。` +
-      (aiFailed
-        ? `<br>其中 <b>${aiFailed}</b> 条模型没返回结果（超时或返回被截断），可再点一次「重新分析」补上。`
-        : "") +
-      `<br><b>已全部自动勾选</b>，点「确认归类」一次完成；不想动的先勾掉。`;
-    syncAiConfirm();
+    hideAiProg();
+    showAiResults(res, aiFailed);
   } catch (e) {
+    hideAiProg();
+    /* 清掉上一轮的建议，免得再打开面板看到一份过期的列表 */
     aiResults = [];
     renderAiList();
-    aiBarEl.classList.remove("on");
     if (e && e.name === "AbortError") {
-      aiDescEl.textContent = "已停止，什么都没改。";
+      toast("已停止，什么都没改。", 2600);
     } else {
       const msg = (e && e.message) || String(e);
-      aiDescEl.textContent = "出错了：" + msg;
-      toast("AI 归类失败：" + msg, 3200);
+      toast("AI 归类失败：" + msg, 3600);
     }
   } finally {
     aiRunning = false;
@@ -1144,12 +1110,37 @@ async function runAi() {
   }
 }
 
+/* 跑完把建议摆进面板让人确认；确认前不写库 */
+function showAiResults(res, failed) {
+  aiResults = res;
+  aiStartEl.textContent = "重新分析";
+  aiConfirmEl.disabled = true;
+  aiConfirmEl.textContent = "确认归类";
+  renderAiList();
+  const hit = res.filter((r) => r.folderId || r.newFolder).length;
+  const fresh = new Set(res.filter((r) => r.newFolder).map((r) => r.newFolder));
+  aiDescEl.innerHTML =
+    `分析完成：${res.length} 条里 <b>${hit}</b> 条给出归属` +
+    (fresh.size ? `（新建文件夹：${[...fresh].map(esc).join("、")}）` : "") +
+    `。` +
+    (failed
+      ? `<br>其中 <b>${failed}</b> 条模型没返回结果（超时或返回被截断），可再点一次「重新分析」补上。`
+      : "") +
+    `<br><b>已全部自动勾选</b>，点「确认归类」一次完成；不想动的先勾掉。<b>不会改动小红书</b>。`;
+  syncAiConfirm();
+  openChildSheet($("#ai"), aiParentSel);
+}
+
 aiStartEl.addEventListener("click", () => {
   if (aiRunning && aiCtrl) {
     aiCtrl.abort();
     return;
   }
-  runAi();
+  startAi({ fromMenu: aiParentSel === "#menu" });
+});
+
+$("#aiprogStop").addEventListener("click", () => {
+  if (aiCtrl) aiCtrl.abort();
 });
 
 aiConfirmEl.addEventListener("click", async () => {
@@ -1240,7 +1231,6 @@ async function saveCollectTarget(v) {
 
 async function openCollectSheet() {
   await loadCollectTarget();
-  $("#targetCustom").value = "";
   $$("#targetGrid button").forEach((b) =>
     b.classList.toggle("on", Number(b.dataset.target) === collectTarget)
   );
