@@ -1,0 +1,13 @@
+# 本地私钥：绝不要提交（DeepSeek Key 放这里，或改用面板「设置」）
+config.local.js
+**/config.local.js
+
+# 依赖与构建产物（扩展本体零依赖，node_modules 只是跑测试用的）
+node_modules/
+*.zip
+
+# 编辑器 / 系统垃圾
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

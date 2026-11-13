@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "小红书收藏库",
+  "version": "0.2.0",
+  "description": "旁路采集小红书网页版收藏，在本机做文件夹归类、备注、搜索与 CSV 导出；删除文件夹时可逐条取消收藏。",
+  "minimum_chrome_version": "114",
+  "permissions": ["storage", "sidePanel", "tabs"],
+  "host_permissions": ["https://www.xiaohongshu.com/*", "https://api.deepseek.com/*"],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://www.xiaohongshu.com/*"],
+      "js": ["src/inject.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": ["https://www.xiaohongshu.com/*"],
+      "js": ["src/bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "side_panel": {
+    "default_path": "src/panel/panel.html"
+  },
+  "action": {
+    "default_title": "小红书收藏库"
+  }
+}
