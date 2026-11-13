@@ -17,7 +17,7 @@ let collecting = false;
 let hasMore = true;
 let lastDataAt = 0;
 let timer = null;
-let target = 100;
+let target = 1000;
 let seen = new Set();
 let total = 0;
 
@@ -104,7 +104,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     collecting = true;
     hasMore = true;
     lastDataAt = Date.now();
-    target = Number(msg.target) > 0 ? Number(msg.target) : 100;
+    target = Number(msg.target) > 0 ? Number(msg.target) : 1000;
     seen = new Set();
     total = 0;
     if (timer) clearTimeout(timer);

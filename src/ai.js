@@ -7,14 +7,20 @@
  * 三条硬规则：
  *   1. 只发标题和作者，不发封面、链接、备注（隐私最小化）
  *   2. 只输出建议，绝不自己写库；写不写、写哪条由用户确认
- *   3. 每次最多 MAX_PER_RUN 条、每批 BATCH_SIZE 条，避免一次烧掉太多 token
+ *   3. 单次点击最多 MAX_PER_RUN 条，内部按 BATCH_SIZE 条一批分批调接口——
+ *      一次请求塞太多条，返回的 JSON 会被 max_tokens 截断，整批就白跑了
  */
 
 import { DEEPSEEK_MODEL, MAX_FOLDERS } from "./config.js";
 
 export const API_URL = "https://api.deepseek.com/chat/completions";
-export const BATCH_SIZE = 20;
-export const MAX_PER_RUN = 60;
+/* 每批 50 条：单批输出约 1200 token，离 8k 上限还有余量，
+ * 500 条 = 1 次规划 + 10 次分类，串行跑 2~4 分钟。 */
+export const BATCH_SIZE = 50;
+export const MAX_PER_RUN = 500;
+/* 单批失败（超时 / 输出被截断 / 个别 JSON 坏了）时递归对半拆，
+ * 拆到这么小还失败就只丢掉这一小撮，不让整轮 500 条陪葬。 */
+const MIN_SPLIT = 10;
 
 /* 置信度分三档，比一个精确到个位的百分数诚实：
  * 大模型对自己的把握估计得并不准，85 和 88 之间的差别没有意义。 */
@@ -239,14 +245,14 @@ function httpError(status) {
   return "请求失败（HTTP " + status + "）";
 }
 
-async function callOnce({ apiKey, messages, signal }) {
+async function callOnce({ apiKey, messages, signal, maxTokens = 1600, timeoutMs = 60000 }) {
   const ctrl = new AbortController();
   const onAbort = () => ctrl.abort();
   if (signal) {
     if (signal.aborted) ctrl.abort();
     else signal.addEventListener("abort", onAbort);
   }
-  const timer = setTimeout(() => ctrl.abort(), 60000);
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(API_URL, {
       method: "POST",
@@ -259,7 +265,7 @@ async function callOnce({ apiKey, messages, signal }) {
         messages,
         response_format: { type: "json_object" },
         temperature: 0.1,
-        max_tokens: 1600
+        max_tokens: maxTokens
       }),
       signal: ctrl.signal
     });
@@ -277,18 +283,84 @@ async function callOnce({ apiKey, messages, signal }) {
   }
 }
 
+/* Key 无效、余额不足、被限流这几种错误，重试和拆分都没意义，直接抛出去 */
+function fatalAiError(e) {
+  const msg = (e && e.message) || "";
+  return /Key 无效|余额不足|请求太频繁|没有 DeepSeek Key/.test(msg);
+}
+
+function blankSuggestion(n) {
+  return {
+    id: n.id,
+    title: n.title,
+    folderId: null,
+    folderName: "",
+    newFolder: null,
+    confidence: 0,
+    tier: "存疑"
+  };
+}
+
+/* 一批（或拆分后的半批）分类。
+ * 500 条是长任务：单批超时 / 输出被截断不能让整轮白跑，
+ * 所以失败就对半拆开重试，拆到 MIN_SPLIT 还失败就只把这几条标成
+ * 「没给建议」，接着跑下一批。 */
+async function classifyChunk({ apiKey, chunk, folders, signal, stat }) {
+  try {
+    const content = await callOnce({
+      apiKey,
+      messages: buildMessages(chunk, folders),
+      signal,
+      /* 一条建议约 25 token，留足余量，别让 JSON 说到一半被截断 */
+      maxTokens: Math.min(8000, 300 + chunk.length * 45),
+      timeoutMs: chunk.length > 20 ? 120000 : 90000
+    });
+    return parseSuggestions(content, chunk, folders);
+  } catch (e) {
+    if (signal && signal.aborted) throw e;
+    if (fatalAiError(e)) throw e;
+    if (chunk.length > MIN_SPLIT) {
+      const mid = Math.ceil(chunk.length / 2);
+      stat.splits++;
+      const left = await classifyChunk({
+        apiKey,
+        chunk: chunk.slice(0, mid),
+        folders,
+        signal,
+        stat
+      });
+      const right = await classifyChunk({
+        apiKey,
+        chunk: chunk.slice(mid),
+        folders,
+        signal,
+        stat
+      });
+      return left.concat(right);
+    }
+    stat.failed += chunk.length;
+    return chunk.map(blankSuggestion);
+  }
+}
+
 /* 主入口：先规划、再分批分类。onProgress 用于面板进度条，signal 可中途取消。
- * folders 允许为空——AI 会从零建一套。 */
+ * folders 允许为空——AI 会从零建一套。
+ * 进度事件里 batch/batches 是第几批；结束时 phase="done" 带 failed 条数。 */
 export async function classify({ apiKey, notes, folders = [], onProgress, signal }) {
   if (!apiKey) throw new Error("没有 DeepSeek Key");
   const list = notes.slice(0, MAX_PER_RUN);
   if (!list.length) return [];
 
-  if (onProgress) onProgress({ phase: "plan", done: 0, total: list.length });
+  const batches = Math.ceil(list.length / BATCH_SIZE);
+  if (onProgress)
+    onProgress({ phase: "plan", done: 0, total: list.length, batch: 0, batches });
   const planContent = await callOnce({
     apiKey,
     messages: buildPlanMessages(list, folders),
-    signal
+    signal,
+    /* 规划只要一串文件夹名，给 800 token 绰绰有余；500 条标题一起进去要算一会儿 */
+    maxTokens: 800,
+    timeoutMs: 120000
   });
   const proposed = parsePlan(planContent, folders);
   const effective = folders.concat(
@@ -298,18 +370,43 @@ export async function classify({ apiKey, notes, folders = [], onProgress, signal
     throw new Error("AI 没给出文件夹方案，再点一次「重新分析」试试");
   }
 
+  const stat = { failed: 0, splits: 0 };
   const out = [];
   for (let i = 0; i < list.length; i += BATCH_SIZE) {
     const chunk = list.slice(i, i + BATCH_SIZE);
-    if (onProgress) onProgress({ phase: "classify", done: i, total: list.length });
-    const content = await callOnce({
+    const batch = Math.floor(i / BATCH_SIZE) + 1;
+    if (onProgress)
+      onProgress({ phase: "classify", done: i, total: list.length, batch, batches });
+    const rows = await classifyChunk({
       apiKey,
-      messages: buildMessages(chunk, effective),
-      signal
+      chunk,
+      folders: effective,
+      signal,
+      stat
     });
-    out.push(...parseSuggestions(content, chunk, effective));
-    if (onProgress) onProgress({ phase: "classify", done: i + chunk.length, total: list.length });
+    out.push(...rows);
+    if (onProgress)
+      onProgress({
+        phase: "classify",
+        done: i + chunk.length,
+        total: list.length,
+        batch,
+        batches
+      });
   }
+
+  /* 全部分批都失败才算真失败——否则会显示成「分析完成 0 条」，让人以为 AI 说没救 */
+  if (stat.failed >= list.length) {
+    throw new Error("这一轮没拿到有效结果（超时或返回被截断），再点一次「重新分析」试试");
+  }
+  if (onProgress)
+    onProgress({
+      phase: "done",
+      done: list.length,
+      total: list.length,
+      batches,
+      failed: stat.failed
+    });
   return capNewFolders(out, folders);
 }
 

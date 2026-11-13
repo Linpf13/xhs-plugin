@@ -764,6 +764,73 @@ body.picking .item .tick {
   color: #d4380d;
 }
 
+/* ---------- 采集条数 ---------- */
+
+.target-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0 16px;
+}
+
+.target-grid button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 10px 6px;
+  border-radius: 10px;
+  border: 1px solid #e3e5e8;
+  background: #fff;
+  color: #1f2329;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.target-grid button small {
+  font-weight: 400;
+  font-size: 11px;
+  color: #8a9099;
+}
+
+.target-grid button:hover {
+  border-color: #ffb3bd;
+  color: #ff2442;
+}
+
+.target-grid button.on {
+  border-color: #ff2442;
+  background: #fff1f3;
+  color: #ff2442;
+}
+
+.target-grid button.on small {
+  color: #ff8090;
+}
+
+#targetCustom {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid #e3e5e8;
+  background: #fff;
+  color: #1f2329;
+}
+
+#targetCustom:focus {
+  outline: none;
+  border-color: #ffb3bd;
+}
+
+#targetStop[hidden] {
+  display: none;
+}
+
 /* ---------- 详情 ---------- */
 
 .d-note {

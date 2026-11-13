@@ -635,7 +635,7 @@ $("#menu").addEventListener("click", async (e) => {
   const act = item.dataset.menu;
   closeSheets();
 
-  if (act === "collect") return startCollect();
+  if (act === "collect") return openCollectSheet();
 
   if (act === "export") {
     const rows = sortedNotes();
@@ -675,8 +675,31 @@ $("#menu").addEventListener("click", async (e) => {
   }
 });
 
-/* ---------------- 文件夹管理 ---------------- */
+/* 采集条数：预设点了直接开跑，自定义填完再点按钮 */
+$("#collectBack").addEventListener("click", backSheet);
 
+$("#targetGrid").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-target]");
+  if (!btn) return;
+  startCollect(Number(btn.dataset.target));
+});
+
+$("#targetGo").addEventListener("click", () => {
+  const v = clampTarget($("#targetCustom").value);
+  if (!v) return toast("先填个条数，比如 2000", 2400);
+  startCollect(v);
+});
+
+$("#targetCustom").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    $("#targetGo").click();
+  }
+});
+
+$("#targetStop").addEventListener("click", stopCollect);
+
+/* ---------------- 文件夹管理 ---------------- */
 function openFolders() {
   const rows = state.folders.map((f) => {
     const c = state.notes.filter((n) => n.folder === f.id).length;
@@ -1034,8 +1057,12 @@ async function openAi(fromMenu = false) {
   aiConfirmEl.disabled = true;
   aiConfirmEl.textContent = "确认归类";
   const capped = Math.min(pending, MAX_PER_RUN);
+  const over = pending - capped;
   const slots = Math.max(0, MAX_FOLDERS - state.folders.length);
   aiDescEl.innerHTML = `有 <b>${pending}</b> 条未分类，本次处理前 <b>${capped}</b> 条。<br>` +
+    (over
+      ? `余下 <b>${over}</b> 条这一轮先不动，跑完再点一次「重新分析」接着归类。<br>`
+      : "") +
     (state.folders.length
       ? `AI 会结合现有文件夹（${state.folders.map((f) => esc(f.name)).join("、")}）规划方案。`
       : `你还没有任何文件夹——AI 会<b>自己创建</b>一套，不用手动建。`) +
@@ -1066,17 +1093,23 @@ async function runAi() {
   aiDescEl.textContent = "AI 正在看这批收藏，规划文件夹…";
 
   try {
+    let aiFailed = 0;
     const res = await classify({
       apiKey: await getKey(),
       notes: pending,
       folders: state.folders,
       signal: aiCtrl.signal,
-      onProgress: ({ phase, done, total }) => {
+      onProgress: ({ phase, done, total, batch, batches, failed }) => {
+        if (phase === "done") {
+          aiFailed = failed || 0;
+          return;
+        }
         aiFillEl.style.width = Math.round((done / Math.max(total, 1)) * 100) + "%";
         aiDescEl.textContent =
           phase === "plan"
-            ? "AI 正在看这批收藏，规划文件夹…"
-            : `分类中 ${done} / ${total}…`;
+            ? `AI 正在看这 ${total} 条收藏，规划文件夹…`
+            : `分类中 ${done} / ${total}…` +
+              (batches > 1 ? `（第 ${batch} / ${batches} 批）` : "");
       }
     });
     aiResults = res;
@@ -1087,7 +1120,11 @@ async function runAi() {
     aiDescEl.innerHTML =
       `分析完成：${res.length} 条里 <b>${hit}</b> 条给出归属` +
       (fresh.size ? `（新建文件夹：${[...fresh].map(esc).join("、")}）` : "") +
-      `。<br><b>已全部自动勾选</b>，点「确认归类」一次完成；不想动的先勾掉。`;
+      `。` +
+      (aiFailed
+        ? `<br>其中 <b>${aiFailed}</b> 条模型没返回结果（超时或返回被截断），可再点一次「重新分析」补上。`
+        : "") +
+      `<br><b>已全部自动勾选</b>，点「确认归类」一次完成；不想动的先勾掉。`;
     syncAiConfirm();
   } catch (e) {
     aiResults = [];
@@ -1172,7 +1209,47 @@ aiConfirmEl.addEventListener("click", async () => {
 
 /* ---------------- 采集 ---------------- */
 
-const COLLECT_TARGET = 100;
+/* 默认采 1000 条（旧版是 100）；点菜单的「开始采集」先选条数，选过就记住。
+ * 上限 5000 是拍出来的：再大这一屏的收藏页也刷不完，而且滚动太久易掉线。 */
+const COLLECT_DEFAULT = 1000;
+const COLLECT_MIN = 20;
+const COLLECT_MAX = 5000;
+const TARGET_STORE = "collectTarget";
+let collectTarget = COLLECT_DEFAULT;
+
+function clampTarget(v) {
+  const n = Math.round(Number(v) || 0);
+  if (!n) return 0;
+  return Math.max(COLLECT_MIN, Math.min(COLLECT_MAX, n));
+}
+
+async function loadCollectTarget() {
+  try {
+    if (!hasKeyStore()) return;
+    const got = await chrome.storage.local.get(TARGET_STORE);
+    const v = got && clampTarget(got[TARGET_STORE]);
+    if (v) collectTarget = v;
+  } catch (e) {}
+}
+
+async function saveCollectTarget(v) {
+  try {
+    if (hasKeyStore()) await chrome.storage.local.set({ [TARGET_STORE]: v });
+  } catch (e) {}
+}
+
+async function openCollectSheet() {
+  await loadCollectTarget();
+  $("#targetCustom").value = "";
+  $$("#targetGrid button").forEach((b) =>
+    b.classList.toggle("on", Number(b.dataset.target) === collectTarget)
+  );
+  $("#collectDesc").innerHTML = state.collecting
+    ? "正在采集中。<b>点任意条数会先停下来重新开始</b>；只想停就点下面的「停止采集」。"
+    : "点一个条数就开始。页面会自动往下滚，<b>别切走这个标签页</b>，中途可以点「停止采集」。";
+  $("#targetStop").hidden = !state.collecting;
+  openChildSheet($("#collect"), "#menu");
+}
 
 async function activeXhsTab() {
   if (typeof chrome === "undefined" || !chrome.tabs) return null;
@@ -1182,32 +1259,46 @@ async function activeXhsTab() {
   return tab;
 }
 
-async function startCollect() {
-  if (state.collecting) {
-    const tab = await activeXhsTab();
-    if (tab) {
-      try {
-        await chrome.tabs.sendMessage(tab.id, { type: "xhsfav-stop" });
-      } catch (e) {}
-    }
-    state.collecting = false;
-    statusEl.classList.remove("live");
-    statusEl.textContent = "已停止采集。";
-    return;
+async function stopCollect() {
+  const tab = await activeXhsTab();
+  if (tab) {
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: "xhsfav-stop" });
+    } catch (e) {}
   }
+  state.collecting = false;
+  statusEl.classList.remove("live");
+  statusEl.textContent = "已停止采集。";
+  closeSheets();
+}
+
+async function startCollect(target = collectTarget) {
+  const t = clampTarget(target) || COLLECT_DEFAULT;
+  collectTarget = t;
+  await saveCollectTarget(t);
+
   const tab = await activeXhsTab();
   if (!tab) {
     statusEl.textContent = "当前标签页不是小红书，先切过去再点开始。";
+    closeSheets();
     return;
   }
+  /* 已经在采：先让页面那边收尾，再按新条数重开一轮，不叠着跑 */
+  if (state.collecting) {
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: "xhsfav-stop" });
+    } catch (e) {}
+    state.collecting = false;
+  }
+  closeSheets();
   try {
     await chrome.tabs.sendMessage(tab.id, {
       type: "xhsfav-start",
-      target: COLLECT_TARGET
+      target: t
     });
     state.collecting = true;
     statusEl.classList.add("live");
-    statusEl.textContent = `采集中：0 / ${COLLECT_TARGET} 条 · 页面会自动往下滚，别切走这个标签页。`;
+    statusEl.textContent = `采集中：0 / ${t} 条 · 页面会自动往下滚，别切走这个标签页。`;
   } catch (e) {
     statusEl.textContent =
       "无法连接页面脚本，请刷新小红书页面后重试（F5）。错误：" + esc(String(e && e.message));

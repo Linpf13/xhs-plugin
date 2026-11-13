@@ -58,6 +58,7 @@ global.IntersectionObserver = class {
 
 /* 测试用的假 Key：不依赖 src/config.local.js（那个文件不进仓库） */
 const keyStore = { deepseekKey: "sk-testtesttest1234" };
+const tabsSent = [];
 let runtimeSent = [];
 const runtimeListeners = [];
 global.__runtimeListeners = runtimeListeners;
@@ -83,7 +84,10 @@ global.chrome = {
   sidePanel: { setPanelBehavior: async () => {} },
   tabs: {
     query: async () => [{ id: 1, url: "https://www.xiaohongshu.com/user/profile/1?tab=fav" }],
-    sendMessage: async () => {},
+    sendMessage: async (tabId, msg) => {
+      /* 面板是 sendMessage(tabId, msg)，bridge 自己也用它回响应；两种都收 */
+      tabsSent.push(msg && msg.type ? msg : { type: "raw", value: msg });
+    },
     update: async (tabId, opts) => {
       /* 模拟真实导航：记下 URL、同步 jsdom location、触发 onUpdated complete */
       global.__lastTabUrl = opts && opts.url;
@@ -1478,6 +1482,280 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
     "完成条的 × 不会被挤扁",
     /\.syncbar \.x\s*\{[\s\S]*?flex:\s*0 0 auto/.test(css24)
   );
+}
+
+/* --- 25. 采集条数：默认 1000，可选预设 / 自定义，记住上次选择 --- */
+{
+  await db.clearAll();
+  /* 后面几节把 tabs.sendMessage 改成了路由/stub，这里恢复成「记下来发给页面什么」 */
+  global.chrome.tabs.sendMessage = async (tabId, msg) => {
+    tabsSent.push(msg && msg.type ? msg : { type: "raw", value: msg });
+  };
+  const aiSrc = fs.readFileSync(path.join(ROOT, "ai.js"), "utf8");
+  ok("AI 单次上限 500 条", /export const MAX_PER_RUN = 500;/.test(aiSrc));
+  ok("AI 每批 50 条（一次 500 不会一次塞爆）", /export const BATCH_SIZE = 50;/.test(aiSrc));
+  ok("桥接默认目标也是 1000", /let target = 1000;/.test(fs.readFileSync(path.join(ROOT, "bridge.js"), "utf8")));
+
+  tabsSent.length = 0;
+  $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  const collectItem = $$(".menu-item").find((b) => b.dataset.menu === "collect");
+  ok("菜单里标默认 1000 条", /默认 1000 条/.test(collectItem.textContent), collectItem.textContent.trim());
+  collectItem.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(120);
+  ok("点「开始采集」先出条数选择面板", $("#collect").classList.contains("on"));
+  ok("选择面板有返回角标", !!$("#collectBack svg") && !/返回<\/button>/.test($("#collect").innerHTML));
+  const presets = $$("#targetGrid button");
+  ok(
+    "4 个预设：100/300/500/1000",
+    presets.map((b) => b.dataset.target).join("/") === "100/300/500/1000",
+    presets.map((b) => b.dataset.target).join("/")
+  );
+  ok(
+    "默认高亮 1000 条",
+    ($$("#targetGrid button.on")[0] || {}).dataset &&
+      $$("#targetGrid button.on")[0].dataset.target === "1000",
+    $$("#targetGrid button.on").map((b) => b.dataset.target).join(",")
+  );
+  ok("采集中才有「停止采集」按钮，且默认不显示", $("#targetStop").hidden === true);
+
+  presets.find((b) => b.dataset.target === "500").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await sleep(150);
+  const startMsg = tabsSent.filter((m) => m.type === "xhsfav-start").pop() || {};
+  ok("点 500 直接把 500 条目标下发到页面", startMsg.target === 500, String(startMsg.target));
+  ok("选过的条数写进 storage", keyStore.collectTarget === 500, String(keyStore.collectTarget));
+  ok("状态栏显示 0 / 500 条", /0 \/ 500 条/.test($("#status").textContent), $("#status").textContent);
+  ok("开跑后浮层自动收起", !$("#collect").classList.contains("on"));
+
+  /* 再打开：记住上次 500，并且能停下来 */
+  $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  $$(".menu-item").find((b) => b.dataset.menu === "collect").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await sleep(150);
+  ok(
+    "再次打开记住上次选的 500",
+    ($$("#targetGrid button.on")[0] || {}).dataset &&
+      $$("#targetGrid button.on")[0].dataset.target === "500",
+    $$("#targetGrid button.on").map((b) => b.dataset.target).join(",")
+  );
+  ok("采集中时出现「停止采集」", $("#targetStop").hidden === false);
+  ok("采集中时说明会重开一轮", /重新开始/.test($("#collectDesc").textContent));
+
+  $("#targetStop").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(120);
+  ok("点停止会下发 stop 指令", tabsSent.some((m) => m.type === "xhsfav-stop"));
+  ok("停止后状态栏说明已停止", /已停止采集/.test($("#status").textContent), $("#status").textContent);
+
+  /* 自定义条数：越界会被夹到 20~5000 */
+  $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  $$(".menu-item").find((b) => b.dataset.menu === "collect").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await sleep(120);
+  $("#targetCustom").value = "99999";
+  $("#targetGo").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(150);
+  ok(
+    "自定义超上限被夹到 5000",
+    (tabsSent.filter((m) => m.type === "xhsfav-start").pop() || {}).target === 5000,
+    String((tabsSent.filter((m) => m.type === "xhsfav-start").pop() || {}).target)
+  );
+
+  const before = tabsSent.length;
+  $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  $$(".menu-item").find((b) => b.dataset.menu === "collect").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await sleep(120);
+  $("#targetCustom").value = "";
+  $("#targetGo").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(120);
+  ok("没填自定义条数时不乱开跑", tabsSent.filter((m) => m.type === "xhsfav-start").length === 2);
+
+  /* 返回键回到「更多操作」，不是首页 */
+  $("#targetCustom").value = "800";
+  $("#collectBack").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(80);
+  ok("条数面板返回落到更多操作", $("#menu").classList.contains("on") && !$("#collect").classList.contains("on"));
+  closeSheetsFor25();
+  function closeSheetsFor25() {
+    document.querySelectorAll(".sheet.on").forEach((s) => s.classList.remove("on"));
+    const scrim = $("#scrim");
+    if (scrim) scrim.classList.remove("on");
+  }
+}
+
+/* --- 26. 500 条真的能分批跑完；单批坏掉自动拆半重试 --- */
+{
+  /* user 消息里「文件夹：」和「笔记：」都带序号，只数笔记那段 */
+  const noteLinesOf = (body) => {
+    const raw = body.messages[1].content;
+    const tail = raw.split("笔记：")[1] || "";
+    return tail.split("\n").filter((l) => /^\d+\./.test(l));
+  };
+  const many = Array.from({ length: 120 }, (_, i) => ({
+    id: "m" + i,
+    title: "测试笔记标题 " + i,
+    author: "作者" + (i % 3)
+  }));
+  const folders = [{ id: "g1", name: "装修灵感" }];
+
+  let calls = [];
+  global.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    const isPlan = /设计一套文件夹/.test(body.messages[0].content);
+    if (isPlan) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: '{"folders":["装修灵感"]}' } }] })
+      };
+    }
+    const n = noteLinesOf(body).length;
+    const items = Array.from({ length: n }, (_, i) => ({ i: i + 1, f: "装修灵感", c: 80 }));
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ choices: [{ message: { content: JSON.stringify({ items }) } }] })
+    };
+  };
+
+  const res = await aiMod.classify({ apiKey: "sk-x", notes: many, folders });
+  const classifyCalls = calls.filter((c) => !/设计一套文件夹/.test(c.messages[0].content));
+  ok("120 条分成 3 批（每批 50）", classifyCalls.length === 3, String(classifyCalls.length));
+  ok(
+    "每批不超过 50 条",
+    classifyCalls.every((c) => noteLinesOf(c).length <= 50),
+    classifyCalls.map((c) => noteLinesOf(c).length).join("/")
+  );
+  ok("120 条全部拿到建议", res.length === 120 && res.every((r) => r.folderId === "g1"), String(res.length));
+  ok(
+    "批量越大 max_tokens 越宽（避免 JSON 被截断）",
+    Number(classifyCalls[0].max_tokens) > 1600,
+    String(classifyCalls[0].max_tokens)
+  );
+
+  /* 第二批返回坏 JSON → 自动对半拆开重试，整轮不失败 */
+  calls = [];
+  let badOnce = true;
+  global.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    calls.push(body);
+    const isPlan = /设计一套文件夹/.test(body.messages[0].content);
+    if (isPlan) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: '{"folders":["装修灵感"]}' } }] })
+      };
+    }
+    const lines = noteLinesOf(body);
+    if (lines.length > 40 && badOnce) {
+      badOnce = false;
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: "我说点别的，没有 JSON" } }] })
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                items: lines.map((_, i) => ({ i: i + 1, f: "装修灵感", c: 70 }))
+              })
+            }
+          }
+        ]
+      })
+    };
+  };
+  const res2 = await aiMod.classify({ apiKey: "sk-x", notes: many, folders });
+  ok("坏掉的那批被拆小后重跑，120 条仍有建议", res2.length === 120 && res2.every((r) => r.folderId === "g1"), String(res2.length));
+  ok("确实多调用了（拆分重试）", calls.length > 4, String(calls.length));
+
+  /* 全批都失败 → 抛错，而不是「分析完成 0 条」 */
+  global.fetch = async (url, init) => {
+    const body = JSON.parse(init.body);
+    if (/设计一套文件夹/.test(body.messages[0].content)) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ choices: [{ message: { content: '{"folders":["装修灵感"]}' } }] })
+      };
+    }
+    return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: "坏" } }] }) };
+  };
+  let thrown = "";
+  try {
+    await aiMod.classify({ apiKey: "sk-x", notes: many, folders });
+  } catch (e) {
+    thrown = e.message;
+  }
+  ok("全部失败时明确报错", /再点一次/.test(thrown), thrown);
+
+  /* 余额不足这类错误不要重试，直接抛 */
+  global.fetch = async () => ({ ok: false, status: 402, json: async () => ({}) });
+  let thrown2 = "";
+  try {
+    await aiMod.classify({ apiKey: "sk-x", notes: many, folders });
+  } catch (e) {
+    thrown2 = e.message;
+  }
+  ok("余额不足直接抛错", /余额不足/.test(thrown2), thrown2);
+}
+
+/* --- 27. 未分类超过 500 条时面板要说清「这一轮跑多少、余下多少」 --- */
+{
+  await db.clearAll();
+  const manyNotes = Array.from({ length: 505 }, (_, i) => ({
+    id: "p" + i,
+    title: "批量笔记 " + i,
+    author: "作者",
+    liked: "1",
+    cover: "",
+    xsecToken: "T",
+    folder: null,
+    note: "",
+    firstSeen: now + i,
+    lastSeen: now
+  }));
+  await db.saveNotes(manyNotes);
+  await sleep(1700);
+  $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  $$(".menu-item").find((b) => b.dataset.menu === "ai").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await sleep(150);
+  const desc = $("#aiDesc").textContent;
+  ok("提示本次处理 500 条", /500/.test(desc), desc.slice(0, 60));
+  ok("提示余下 5 条下次继续", /余下\s*5\s*条/.test(desc), desc.replace(/\s+/g, " ").slice(0, 90));
+  ok("不再显示「本次处理前 60 条」的老上限", !/本次处理前 60 条/.test(desc));
+  await db.clearAll();
+}
+
+/* --- 28. 采集条数面板的样式（320px 下两列、不挤） --- */
+{
+  const css28 = fs.readFileSync(path.join(ROOT, "panel/panel.css"), "utf8");
+  ok(
+    "预设按钮两列排布",
+    /\.target-grid\s*\{[\s\S]*?grid-template-columns:\s*1fr 1fr/.test(css28)
+  );
+  ok("选中的预设高亮", /\.target-grid button\.on\s*\{[\s\S]*?border-color:\s*#ff2442/.test(css28));
+  ok("自定义输入框吃满一行", /#targetCustom\s*\{[\s\S]*?width:\s*100%/.test(css28));
+  ok("停止按钮隐藏时真的不占位", /#targetStop\[hidden\]\s*\{[\s\S]*?display:\s*none/.test(css28));
 }
 
 const failed = results.filter((r) => !r.pass);
