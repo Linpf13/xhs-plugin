@@ -190,7 +190,18 @@ await sleep(60);
 $$(".item")[2].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 await sleep(60);
 ok("点条目打开详情", $("#detail").classList.contains("on"));
-ok("详情标题正确", $("#dTitle").textContent === "早八人的 10 分钟通勤妆", $("#dTitle").textContent);
+ok(
+  "详情里不再重复帖子标题和封面",
+  !$("#dTitle") && !$("#dMeta") && !$("#dCover"),
+  [$("#dTitle"), $("#dMeta"), $("#dCover")].map((x) => !!x).join(",")
+);
+ok(
+  "详情只剩「所属文件夹 + 备注」两栏",
+  $$("#detail .field").length === 2 &&
+    /所属文件夹/.test($("#detail").textContent) &&
+    /备注/.test($("#detail").textContent),
+  String($$("#detail .field").length)
+);
 $("#dFolder").value = "f2";
 $("#dNote").value = "周末照着试一次";
 $("#dSave").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
@@ -199,6 +210,43 @@ const saved = (await db.getAllNotes()).find((n) => n.id === "n2");
 ok("文件夹已保存", saved.folder === "f2", String(saved.folder));
 ok("备注已保存", saved.note === "周末照着试一次", saved.note);
 ok("详情已关闭", !$("#detail").classList.contains("on"));
+
+/* --- 4b. 详情：Enter 直接保存备注 --- */
+$$(".item")[2].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(60);
+$("#dNote").value = "周末照着试一次，回车直接存";
+$("#dNote").dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+await sleep(200);
+const savedByEnter = (await db.getAllNotes()).find((n) => n.id === "n2");
+ok("Enter 直接保存备注", savedByEnter.note === "周末照着试一次，回车直接存", String(savedByEnter.note));
+ok("Enter 保存后详情关闭", !$("#detail").classList.contains("on"));
+
+/* --- 4c. 中文输入法组词中的 Enter 不触发保存 --- */
+$$(".item")[2].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(60);
+$("#dNote").value = "组词中按回车";
+$("#dNote").dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", isComposing: true, bubbles: true }));
+await sleep(120);
+ok("组词 Enter 不保存、详情还开着", $("#detail").classList.contains("on"));
+const n2afterIme = (await db.getAllNotes()).find((n) => n.id === "n2");
+ok("组词 Enter 不落库", n2afterIme.note === "周末照着试一次，回车直接存", String(n2afterIme.note));
+
+/* --- 4d. 自定义文件夹下拉 --- */
+ok("下拉默认收起", $("#dFolderList").hidden === true);
+$("#dFolderBtn").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(30);
+ok("点按钮展开下拉", $("#dFolderList").hidden === false);
+const fsOpts = $$("#dFolderList .fs-opt");
+ok("下拉有「未分类 + 各文件夹」", fsOpts.length >= 3, fsOpts.length + " 项");
+fsOpts[1].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(30);
+ok("点选项写回隐藏域", $("#dFolder").value === fsOpts[1].dataset.id, $("#dFolder").value);
+ok("选中后下拉收起", $("#dFolderList").hidden === true);
+ok("选中项带高亮标记", fsOpts[1].classList.contains("on"));
+/* 收起靠「再点这一条」，展开块里不再放「收起」按钮 */
+$$(".item")[2].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(60);
+ok("再点同一条关闭详情", !$("#detail").classList.contains("on"));
 
 /* --- 5. 备注可被搜索到 --- */
 search.value = "照着试";
@@ -265,7 +313,7 @@ await sleep(250);
 const folders = await db.getAllFolders();
 ok("文件夹已创建", folders.some((f) => f.name === "出行探店"), folders.map((f) => f.name).join(","));
 
-/* --- 9. 删除文件夹：笔记一起删 + 排队取消收藏 --- */
+/* --- 9. 删除文件夹：默认只删壳，勾选后才连收藏一起取消 --- */
 $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 await sleep(60);
 $$('.menu-item').find((b) => b.dataset.menu === "folders").dispatchEvent(
@@ -277,25 +325,71 @@ row.querySelector('button[data-op="del"]').dispatchEvent(new window.MouseEvent("
 await sleep(80);
 ok("删除前有确认弹窗", $("#confirm").classList.contains("on"));
 ok(
-  "确认文案说明会取消收藏（UI 模拟）",
-  /取消收藏/.test($("#confirmBody").textContent) && /笔记页/.test($("#confirmBody").textContent),
-  $("#confirmBody").textContent.slice(0, 50)
+  "默认动作写清楚是「只删文件夹」，收藏回「未分类」",
+  /只删文件夹/.test($("#confirmBody").textContent) &&
+    /未分类/.test($("#confirmBody").textContent),
+  $("#confirmBody").textContent.slice(0, 60)
 );
+ok("默认按钮就是「只删文件夹」", $("#confirmOk").textContent === "只删文件夹", $("#confirmOk").textContent);
+ok(
+  "默认按钮不是危险红（只删壳不该看起来像清库）",
+  !/danger-solid/.test($("#confirmOk").className),
+  $("#confirmOk").className
+);
+const delCheck = $("#confirmCheckBox");
+ok("有一个可勾的「同时取消收藏」选项，且默认不勾", !!delCheck && delCheck.checked === false);
+ok("勾选项里写明了条数", /2 条/.test($("#confirmCheck").textContent), $("#confirmCheck").textContent.trim());
+
+const syncBefore = runtimeSent.filter((m) => m.type === "xhsfav-sync-start").length;
 $("#confirmOk").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 await sleep(450);
 const afterDel = await db.getAllNotes();
 ok("文件夹已删除", !(await db.getAllFolders()).some((f) => f.id === "f1"));
-/* 2026-11-13 UI 模拟语义：笔记记录保留（要拿 token 打开笔记页），
- * 标记 pendingUnfav 从列表隐藏，取消成功后由后台真删 */
-ok("笔记记录保留（供打开笔记页用）", afterDel.length === 5, afterDel.length + " 条");
-const pend = afterDel.filter((n) => n.pendingUnfav);
-ok("文件夹里那两条被标记 pendingUnfav", pend.length === 2 && pend.every((n) => n.id === "n0" || n.id === "n1"), pend.map((n) => n.id).join(","));
-ok("pendingUnfav 的 folder 被清空", pend.every((n) => !n.folder));
-ok("token 还在（打开笔记页必需）", pend.every((n) => n.xsecToken), pend.map((n) => n.xsecToken).join(","));
+ok("笔记一条没少、也没被隐藏", afterDel.length === 5 && !afterDel.some((n) => n.pendingUnfav), afterDel.length + " 条");
+const backToNone = afterDel.filter((n) => n.id === "n0" || n.id === "n1");
+ok("原来夹里的两条回到「未分类」", backToNone.every((n) => !n.folder), backToNone.map((n) => String(n.folder)).join(","));
+ok("token 原样保留（以后要取消收藏还用得上）", backToNone.every((n) => n.xsecToken));
+ok("没碰小红书：没有触发取消收藏同步", runtimeSent.filter((m) => m.type === "xhsfav-sync-start").length === syncBefore);
+ok("没进待取消队列", (await db.getUnfavQueue()).length === 0, JSON.stringify(await db.getUnfavQueue()));
 ok("其他文件夹归属不受影响", afterDel.some((n) => n.folder === "f2"));
+ok("toast 说明收藏回到「未分类」", /未分类/.test($("#toast").textContent), $("#toast").textContent.trim());
+ok("没有红色进度条", !$("#syncbar").classList.contains("on"));
+
+/* ② 勾选「同时取消收藏」 → 才走小红书那条路 */
+await db.putFolder({ id: "fz", name: "临时夹", createdAt: 9 });
+await db.setNotesFolder(["n0", "n1"], "fz");
+await sleep(1750);
+$("#foldersBack").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(80);
+$$('.menu-item').find((b) => b.dataset.menu === "folders").dispatchEvent(
+  new window.MouseEvent("click", { bubbles: true })
+);
+await sleep(90);
+const rowZ = $$(".folder-row").find((r) => r.dataset.id === "fz");
+ok("新建的「临时夹」出现在列表里", !!rowZ);
+rowZ.querySelector('button[data-op="del"]').dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(90);
+const checkZ = $("#confirmCheckBox");
+ok("勾选项存在", !!checkZ);
+checkZ.checked = true;
+checkZ.dispatchEvent(new window.Event("change", { bubbles: true }));
+await sleep(40);
+ok(
+  "一勾选，按钮就变成「删除并取消收藏」",
+  $("#confirmOk").textContent === "删除并取消收藏",
+  $("#confirmOk").textContent
+);
+ok("一勾选，按钮变成危险红", /danger-solid/.test($("#confirmOk").className), $("#confirmOk").className);
+
+$("#confirmOk").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+await sleep(450);
+const pend = (await db.getAllNotes()).filter((n) => n.pendingUnfav);
+ok("勾选后那两条被标记 pendingUnfav", pend.length === 2 && pend.every((n) => n.id === "n0" || n.id === "n1"), pend.map((n) => n.id).join(","));
+ok("pendingUnfav 的 folder 被清空", pend.every((n) => !n.folder));
+ok("记录保留（供打开笔记页用）", (await db.getAllNotes()).length === 5, String((await db.getAllNotes()).length));
 const queueAfterDel = await db.getUnfavQueue();
 ok("被删笔记进了取消收藏队列", queueAfterDel.join(",") === "n0,n1", queueAfterDel.join(","));
-ok("触发后台同步", runtimeSent.some((m) => m.type === "xhsfav-sync-start"), JSON.stringify(runtimeSent));
+ok("触发后台同步", runtimeSent.some((m) => m.type === "xhsfav-sync-start"), JSON.stringify(runtimeSent.slice(-2)));
 ok("toast 提示将逐条取消收藏", /正在取消收藏|逐条取消收藏/.test($("#toast").textContent), $("#toast").textContent.trim().slice(0, 40));
 ok("删除后红色进度条出现", $("#syncbar").classList.contains("on"), $("#syncbar").textContent.trim().slice(0, 40));
 
@@ -1138,16 +1232,16 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
   );
 
   /* ①b 返回键一律是「‹」角标，不出现「返回」两个字 */
-  const backIds = ["detailBack", "menuBack", "foldersBack", "aiBack", "settingsBack"];
+  const backIds = ["menuBack", "foldersBack", "aiBack", "settingsBack"];
   const backEls = backIds.map((id) => document.getElementById(id));
-  ok("五个返回键都在", backEls.every(Boolean), backEls.map((e) => !!e).join(","));
+  ok("四个返回键都在", backEls.every(Boolean), backEls.map((e) => !!e).join(","));
   ok(
     "返回键里都是角标图标、没有「返回」文字",
     backEls.every((b) => b && !!b.querySelector("svg") && !/返回/.test(b.textContent)),
     backEls.map((b) => (b ? b.textContent.trim() : "null")).join("|")
   );
   ok(
-    "角标保留了可读的无障碍名（aria-label=返回）",
+    "角标保留了可读的无障碍名（返回）",
     backEls.every((b) => b && b.getAttribute("aria-label") === "返回"),
     backEls.map((b) => (b ? b.getAttribute("aria-label") : "")).join("|")
   );
@@ -1486,7 +1580,11 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
   $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await sleep(60);
   const collectItem = $$(".menu-item").find((b) => b.dataset.menu === "collect");
-  ok("菜单里标默认 1000 条", /默认 1000 条/.test(collectItem.textContent), collectItem.textContent.trim());
+  ok(
+    "菜单里的「开始采集」不再标默认条数（条数是让人自己选的）",
+    collectItem.textContent.trim() === "开始采集" && !/默认/.test(collectItem.textContent),
+    collectItem.textContent.trim()
+  );
   collectItem.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
   await sleep(120);
   ok("点「开始采集」先出条数选择面板", $("#collect").classList.contains("on"));
@@ -1498,9 +1596,8 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
     presets.map((b) => b.dataset.target).join("/")
   );
   ok(
-    "默认高亮 1000 条",
-    ($$("#targetGrid button.on")[0] || {}).dataset &&
-      $$("#targetGrid button.on")[0].dataset.target === "1000",
+    "第一次打开不预选任何条数（四档没有默认）",
+    $$("#targetGrid button.on").length === 0,
     $$("#targetGrid button.on").map((b) => b.dataset.target).join(",")
   );
   ok("采集中才有「停止采集」按钮，且默认不显示", $("#targetStop").hidden === true);
@@ -1786,6 +1883,400 @@ ok("确认后文件夹个数没变", (await db.getAllFolders()).length === 10);
     /\.aiprog-head span\s*\{[\s\S]*?flex:\s*1 1 auto/.test(css28)
   );
   ok("停止按钮隐藏时真的不占位", /#targetStop\[hidden\]\s*\{[\s\S]*?display:\s*none/.test(css28));
+}
+
+/* --- 29. 深色模式：data-theme 驱动，浅色样式一行不改 --- */
+{
+  const css29 = fs.readFileSync(path.join(ROOT, "panel/panel.css"), "utf8");
+  const darkAt = css29.indexOf('html[data-theme="dark"]');
+  ok(
+    "深色由 <html data-theme=\"dark\"> 驱动（不赌 Chrome 报的媒体查询）",
+    darkAt > 0
+  );
+  const light = css29.slice(0, Math.max(darkAt, 0));
+  const dark = css29.slice(Math.max(darkAt, 0));
+  ok(
+    "浅色规则没被改写成 CSS 变量（原来的设计原样保留）",
+    !/var\(--/.test(css29),
+    String((css29.match(/var\(--/g) || []).length) + " 处"
+  );
+  ok(
+    "浅色还是原来的白底深字",
+    /body\s*\{[\s\S]*?color:\s*#1f2329;[\s\S]*?background:\s*#fff;/.test(light)
+  );
+  ok(
+    "深色块写在所有浅色规则之后（后写的才盖得住）",
+    darkAt > css29.indexOf(".item.open"),
+    css29.indexOf(".item.open") + " < " + darkAt
+  );
+  ok(
+    "浅色区一个 data-theme 选择器都没有（浅色不受影响）",
+    css29.slice(0, darkAt).indexOf('html[data-theme="dark"]') === -1
+  );
+  ok(
+    "深色里换掉页面底色和文字",
+    /html\[data-theme="dark"\] body\s*\{\s*color:\s*#e9eaec;\s*background:\s*#16171a;/.test(dark)
+  );
+  ok(
+    "深色里浮层和弹窗一起变深",
+    /html\[data-theme="dark"\] \.sheet\s*\{\s*background:\s*#1b1d21/.test(dark) &&
+      /html\[data-theme="dark"\] \.modal\s*\{\s*background:\s*#1f2124/.test(dark)
+  );
+  ok(
+    "深色里给 color-scheme 声明了 dark（原生控件/滚动条跟着变）",
+    /html\[data-theme="dark"\]\s*\{\s*color-scheme:\s*dark;/.test(dark)
+  );
+  ok(
+    "样式里不再有依赖系统媒体的深色块（那种 Chrome 报 light 时永远不触发）",
+    !/@media\s*\(prefers-color-scheme/.test(css29.replace(/\/\*[\s\S]*?\*\//g, ""))
+  );
+  ok(
+    "备注提示语在深色下也压暗",
+    /html\[data-theme="dark"\] \.field textarea::placeholder\s*\{\s*color:\s*#5b6067/.test(dark)
+  );
+  ok(
+    "浅色里提示语比正文浅得多",
+    /\.field textarea::placeholder\s*\{\s*color:\s*#c9ced4;/.test(light)
+  );
+
+  /* 深色前缀抬高了权重：浅色里 .x.on 这类状态规则会被盖掉，必须重声明 */
+  const stateSels = [
+    ".chip.on",
+    ".mini.on",
+    ".item.sel .tick",
+    ".status.live::before",
+    ".syncbar .bar i",
+    ".ai-bar i",
+    ".fs-opt.on",
+    ".sug .m b",
+  ];
+  const missing = stateSels.filter(
+    (x) => dark.indexOf('html[data-theme="dark"] ' + x) === -1
+  );
+  ok(
+    "选中/进行中的红在深色里重新声明过（不写会被灰掉）",
+    missing.length === 0,
+    missing.join(", ")
+  );
+}
+
+/* --- 30. 「未分类」是兜底状态，不是文件夹 --- */
+{
+  const planned = aiMod.parsePlan('{"folders":["未分类","菜谱","旅行"]}', []);
+  ok(
+    "AI 规划里剔掉「未分类」",
+    !planned.includes("未分类") && planned.includes("菜谱"),
+    planned.join(",")
+  );
+
+  const notes30 = [
+    { id: "u1", title: "口红试色" },
+    { id: "u2", title: "菜谱" }
+  ];
+  const sug30 = aiMod.parseSuggestions(
+    '{"items":[{"i":1,"f":"未分类","c":90},{"i":2,"f":"菜谱","c":80}]}',
+    notes30,
+    [{ id: null, name: "菜谱", isNew: true }]
+  );
+  ok(
+    "模型把某条填成「未分类」时当作没有建议",
+    sug30[0].folderId === null && sug30[0].newFolder === null,
+    JSON.stringify(sug30[0])
+  );
+  ok("同批里其它条照常给建议", sug30[1].newFolder === "菜谱", JSON.stringify(sug30[1]));
+
+  /* 老版本可能已经建出过真的「未分类」文件夹：面板应该在刷新时并回兜底 */
+  await db.clearAll();
+  await db.saveNotes([
+    { id: "m1", title: "被误分类的帖子", author: "a", folder: "bad", firstSeen: 1 }
+  ]);
+  await db.putFolder({ id: "bad", name: "未分类", createdAt: 1 });
+  await sleep(1900);
+  const foldersAfter = await db.getAllFolders();
+  ok(
+    "真实存在过的「未分类」文件夹被并回兜底",
+    !foldersAfter.some((f) => f.name === "未分类"),
+    JSON.stringify(foldersAfter.map((f) => f.name))
+  );
+  const m1 = (await db.getAllNotes()).find((n) => n.id === "m1");
+  ok("里面的笔记回到未分类状态", m1 && !m1.folder, String(m1 && m1.folder));
+}
+
+/* --- 31. 详情就地展开 + 提示语 + 回车保存 --- */
+{
+  await db.clearAll();
+  await db.saveNotes([
+    { id: "d1", title: "上海咖啡地图｜梧桐区 8 家小店", author: "一只小满", liked: 9123, firstSeen: 3 },
+    { id: "d2", title: "早八人的 10 分钟通勤妆", author: "化妆师", firstSeen: 2 }
+  ]);
+  await sleep(1700);
+  /* 前面的用例可能留着文件夹筛选/搜索词，先回到「全部」 */
+  $("#search").value = "";
+  $("#search").dispatchEvent(new window.Event("input", { bubbles: true }));
+  $$(".chip").find((c) => c.dataset.view === "all").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await sleep(120);
+  ok("回到全部视图后能看到两条", $$(".item").length === 2, $$(".item").length + " 条");
+
+  const row1 = $$(".item")[0];
+  row1.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  const detail = $("#detail");
+  ok(
+    "详情就地展开（不再是另开一屏的浮层）",
+    detail.classList.contains("on") && detail.classList.contains("inline")
+  );
+  ok(
+    "详情挂在被点的条目下面",
+    detail.parentElement === $("#list") && detail.previousElementSibling === row1
+  );
+  ok("展开的那条带高亮标记", row1.classList.contains("open"));
+
+  /* 「收起」挂在笔记本身右端，不再飘在下拉框那行右边 */
+  const foldEl = row1.querySelector(".fold");
+  ok(
+    "展开的那条右端出现「收起」",
+    !!foldEl && /收起/.test(foldEl.textContent),
+    foldEl ? foldEl.textContent.trim() : "没有 .fold"
+  );
+  ok(
+    "展开块里不再重复一个「收起」按钮",
+    !detail.querySelector(".sheet-head") && !document.getElementById("detailBack")
+  );
+  const cssFold = fs.readFileSync(path.join(ROOT, "panel/panel.css"), "utf8");
+  ok(
+    "「收起」默认隐藏、只在展开的那条出现",
+    /\.item \.fold\s*\{[\s\S]*?display:\s*none/.test(cssFold) &&
+      /\.item\.open \.fold\s*\{[\s\S]*?display:\s*inline-flex/.test(cssFold),
+    "panel.css 缺 .item .fold 规则"
+  );
+
+  ok("备注框有提示语", !!$("#dNote").placeholder);
+  $("#dNote").dispatchEvent(new window.Event("focus"));
+  ok("光标一进去提示语就收起", $("#dNote").placeholder === "", "placeholder=" + $("#dNote").placeholder);
+  $("#dNote").dispatchEvent(new window.Event("blur"));
+  ok("离开且没写内容时提示语回来", !!$("#dNote").placeholder);
+
+  await sleep(1700);
+  ok(
+    "自动刷新后详情还开着（列表重绘不会把它冲掉）",
+    $("#detail").classList.contains("on") &&
+      $("#detail").previousElementSibling &&
+      $("#detail").previousElementSibling.dataset.id === "d1",
+    String($("#detail").previousElementSibling && $("#detail").previousElementSibling.dataset.id)
+  );
+
+  $$(".item")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  ok("再点同一条就收起", !$("#detail").classList.contains("on"));
+  ok("收起后元素回到 body，不留在列表里", $("#detail").parentElement === document.body);
+
+  $$(".item")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  $("#dNote").value = "秋天去";
+  $("#dNote").dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await sleep(220);
+  const d1 = (await db.getAllNotes()).find((n) => n.id === "d1");
+  ok("回车保存并自动收起", !$("#detail").classList.contains("on") && d1.note === "秋天去", String(d1.note));
+
+  $$(".item")[0].dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await sleep(80);
+  ok("Esc 也能收起", !$("#detail").classList.contains("on"));
+
+  /* 设置里的 Key 也是保存：回车直接存 */
+  await $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(60);
+  $$(".menu-item")
+    .find((b) => b.dataset.menu === "settings")
+    .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await sleep(120);
+  $("#keyInput").value = "sk-zzzzzzzzzzzzzzzzzzzz";
+  $("#keyInput").dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  await sleep(140);
+  ok(
+    "设置里回车就存 Key",
+    keyStore.deepseekKey === "sk-zzzzzzzzzzzzzzzzzzzz",
+    String(keyStore.deepseekKey)
+  );
+
+  await db.clearAll();
+}
+
+/* --- 32. 文件夹管理：按钮叫「修改」，不是「改名」 --- */
+{
+  await db.clearAll();
+  await sleep(1900);
+
+  const menu = async (name) => {
+    await $("#btn-menu").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await sleep(70);
+    $$(".menu-item")
+      .find((b) => b.dataset.menu === name)
+      .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+    await sleep(90);
+  };
+  const click = (el) => el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+  await menu("folders");
+
+  /* ① 新建：确定键是「创建」 */
+  click($("#folderNew"));
+  await sleep(90);
+  ok("新建弹窗标题是「新建文件夹」", $("#namingTitle").textContent === "新建文件夹");
+  ok("新建时确定键是「创建」", $("#namingOk").textContent === "创建", $("#namingOk").textContent);
+  $("#namingInput").value = "旅行清单";
+  click($("#namingOk"));
+  await sleep(320);
+
+  /* ② 修改：同一行按钮叫「修改」，弹窗确定键也是「修改」 */
+  const rowF = $$(".folder-row")[0];
+  const fid = rowF.dataset.id;
+  const editBtn = rowF.querySelector('button[data-op="rename"]');
+  ok("文件夹操作按钮叫「修改」", editBtn.textContent.trim() === "修改", editBtn.textContent.trim());
+
+  click(editBtn);
+  await sleep(90);
+  ok("修改弹窗标题是「修改文件夹名」", $("#namingTitle").textContent === "修改文件夹名", $("#namingTitle").textContent);
+  ok(
+    "修改弹窗的确定键是「完成」而不是「创建」",
+    $("#namingOk").textContent === "完成",
+    $("#namingOk").textContent
+  );
+  ok(
+    "同一弹窗里另一个按钮是「取消」",
+    $("#naming").querySelector('[data-close="naming"]').textContent.trim() === "取消"
+  );
+
+  /* ③ 改完底部给一条提示 */
+  $("#namingInput").value = "旅行清单·秋季";
+  click($("#namingOk"));
+  await sleep(320);
+  const renamed = (await db.getAllFolders()).find((f) => f.id === fid);
+  ok("文件夹名字真的改了", renamed && renamed.name === "旅行清单·秋季", String(renamed && renamed.name));
+  ok(
+    "改完底部提示「修改成功」",
+    $("#toast").textContent === "修改成功" && $("#toast").classList.contains("on"),
+    $("#toast").textContent + "/" + $("#toast").className
+  );
+
+  /* ④ 空名字不落库、弹窗不关（沿用原有校验） */
+  click($$(".folder-row")[0].querySelector('button[data-op="rename"]'));
+  await sleep(90);
+  $("#namingInput").value = "   ";
+  click($("#namingOk"));
+  await sleep(120);
+  ok("名字为空时弹窗不关", $("#naming").classList.contains("on"));
+  click($("#naming").querySelector('[data-close="naming"]'));
+  await sleep(80);
+  ok("点「取消」关掉修改弹窗", !$("#naming").classList.contains("on"));
+
+  /* 回到面板首页，别把浮层留给下一组 */
+  click($("#foldersBack"));
+  await sleep(80);
+  click($("#menuBack"));
+  await sleep(80);
+}
+
+/* --- 33. 外观两档：浅色 / 深色，自己选 --- */
+{
+  const rawHtml = fs.readFileSync(path.join(ROOT, "panel/panel.html"), "utf8");
+  const headBit = rawHtml.slice(0, rawHtml.indexOf('<link rel="stylesheet"'));
+  ok(
+    "首屏前就用内联脚本定好 data-theme（深色下不闪白）",
+    /data-theme/.test(headBit),
+    String(headBit.length)
+  );
+  ok(
+    "首屏脚本不再猜系统（没有 prefers-color-scheme）",
+    !/prefers-color-scheme/.test(headBit) && !/matchMedia/.test(headBit)
+  );
+
+  const segBtns = $$("#themeSeg button");
+  ok(
+    "设置里只有两档：浅色 / 深色",
+    segBtns.map((b) => b.dataset.theme).join("/") === "light/dark",
+    segBtns.map((b) => b.dataset.theme).join("/")
+  );
+
+  const root = document.documentElement;
+  const click = (mode) =>
+    segBtns
+      .find((b) => b.dataset.theme === mode)
+      .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+  click("dark");
+  await sleep(80);
+  ok("点「深色」→ html 上是 dark", root.getAttribute("data-theme") === "dark", String(root.getAttribute("data-theme")));
+  ok("深色选择写进存储", keyStore.theme === "dark", String(keyStore.theme));
+  ok(
+    "选中的那档高亮",
+    segBtns.find((b) => b.dataset.theme === "dark").classList.contains("on") &&
+      !segBtns.find((b) => b.dataset.theme === "light").classList.contains("on")
+  );
+
+  click("light");
+  await sleep(80);
+  ok(
+    "点「浅色」→ html 上回到 light",
+    root.getAttribute("data-theme") === "light" && keyStore.theme === "light",
+    String(root.getAttribute("data-theme"))
+  );
+
+  /* 老版本存过 system：归一成浅色，不会把面板卡在一个不存在的档上 */
+  const rawJs = fs.readFileSync(path.join(ROOT, "panel/panel.js"), "utf8");
+  ok(
+    "旧的 system 存储值回落浅色",
+    /THEME_MODES\.indexOf\(got\[THEME_STORE\]\)\s*>=\s*0/.test(rawJs) &&
+      /const THEME_DEFAULT = "light"/.test(rawJs),
+    "panel.js 没做存储值归一"
+  );
+}
+
+/* --- 34. 扩展图标：自己的图，不是 Chrome 生成的灰底首字 --- */
+{
+  const extRoot = path.resolve(ROOT, "..");
+  const mf = JSON.parse(fs.readFileSync(path.join(extRoot, "manifest.json"), "utf8"));
+  const sizes = ["16", "32", "48", "128"];
+
+  ok(
+    "manifest 里声明了 icons 四档",
+    mf.icons && sizes.every((k) => mf.icons[k]),
+    JSON.stringify(mf.icons)
+  );
+  ok(
+    "工具栏图标也单独指定（action.default_icon）",
+    mf.action && mf.action.default_icon && sizes.every((k) => mf.action.default_icon[k]),
+    JSON.stringify(mf.action && mf.action.default_icon)
+  );
+  ok(
+    "图标是 PNG（Chrome 不认 SVG 当扩展图标）",
+    sizes.every((k) => mf.icons[k] === "icons/icon" + k + ".png"),
+    sizes.map((k) => mf.icons[k]).join(",")
+  );
+
+  let allOk = true;
+  const detail = [];
+  for (const k of sizes) {
+    const f = path.join(extRoot, mf.icons[k]);
+    if (!fs.existsSync(f)) {
+      allOk = false;
+      detail.push(k + ": 缺文件");
+      continue;
+    }
+    const buf = fs.readFileSync(f);
+    /* PNG：8 字节签名 + IHDR（宽高在第 16/20 字节，大端） */
+    const isPng = buf.slice(0, 8).toString("hex") === "89504e470d0a1a0a";
+    const w = buf.readUInt32BE(16);
+    const h = buf.readUInt32BE(20);
+    const px = Number(k);
+    const good = isPng && w === px && h === px && buf.length > 300;
+    if (!good) allOk = false;
+    detail.push(k + ":" + w + "x" + h + "/" + buf.length + "B");
+  }
+  ok("四档文件都在、都是正方形 PNG 且尺寸对得上", allOk, detail.join(" "));
 }
 
 const failed = results.filter((r) => !r.pass);

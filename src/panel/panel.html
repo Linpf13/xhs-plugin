@@ -3,6 +3,19 @@
 <head>
 <meta charset="utf-8">
 <title>小红书收藏库</title>
+<script>
+/* 外观在首屏之前定下来，否则深色下会先闪一下白。
+   只有「浅色 / 深色」两档，用户选哪个就是哪个，不猜系统。
+   这里只能同步读 localStorage（chrome.storage 是异步的），panel.js 再以存储值为准。 */
+(function () {
+  try {
+    var m = localStorage.getItem("xhsfav-theme");
+    document.documentElement.setAttribute("data-theme", m === "dark" ? "dark" : "light");
+  } catch (e) {
+    document.documentElement.setAttribute("data-theme", "light");
+  }
+})();
+</script>
 <link rel="stylesheet" href="panel.css">
 </head>
 <body>
@@ -54,26 +67,23 @@
 
 <div id="scrim" class="scrim"></div>
 
-<section id="detail" class="sheet">
-  <div class="sheet-head">
-    <button type="button" class="link back" id="detailBack" aria-label="返回" title="返回"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
-    <h2>笔记详情</h2>
-  </div>
+<section id="detail" class="sheet" aria-label="分类与备注">
   <div class="sheet-body">
-    <div class="d-note">
-      <div class="cover"><img id="dCover" alt=""></div>
-      <div class="d-text">
-        <p id="dTitle" class="title"></p>
-        <p id="dMeta" class="meta"></p>
-      </div>
-    </div>
     <label class="field">
       <span>所属文件夹</span>
-      <select id="dFolder"></select>
+      <input type="hidden" id="dFolder">
+      <div class="folder-select" id="dFolderSel">
+        <button type="button" class="folder-select-btn" id="dFolderBtn" aria-haspopup="listbox" aria-expanded="false">
+          <span id="dFolderLabel">未分类</span>
+          <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <div class="folder-select-list" id="dFolderList" role="listbox" hidden></div>
+      </div>
     </label>
     <label class="field">
       <span>备注</span>
       <textarea id="dNote" rows="4" placeholder="比如「先量尺寸」「秋天去」"></textarea>
+      <em class="hint">Enter 保存 · Shift + Enter 换行</em>
     </label>
   </div>
   <div class="sheet-foot">
@@ -89,7 +99,7 @@
     <h2>更多操作</h2>
   </div>
   <div class="sheet-body menu">
-    <button type="button" class="menu-item" data-menu="collect">开始采集 <small>默认 1000 条</small></button>
+    <button type="button" class="menu-item" data-menu="collect">开始采集</button>
     <button type="button" class="menu-item" data-menu="ai">AI 自动归类 <small>DeepSeek</small></button>
     <button type="button" class="menu-item" data-menu="export">导出 CSV <small>存下载文件夹</small></button>
     <button type="button" class="menu-item" data-menu="folders">管理文件夹</button>
@@ -152,6 +162,13 @@
     <h2>设置</h2>
   </div>
   <div class="sheet-body">
+    <div class="field">
+      <span>外观</span>
+      <div class="seg" id="themeSeg" role="group" aria-label="外观">
+        <button type="button" data-theme="light">浅色</button>
+        <button type="button" data-theme="dark">深色</button>
+      </div>
+    </div>
     <label class="field">
       <span>DeepSeek API Key</span>
       <input id="keyInput" type="password" placeholder="sk-..." autocomplete="off" spellcheck="false">
@@ -185,6 +202,7 @@
 <section id="confirm" class="modal">
   <h2 id="confirmTitle">确认</h2>
   <p id="confirmBody" class="confirm-body"></p>
+  <div id="confirmCheck" class="confirm-check" hidden></div>
   <div class="modal-foot">
     <button type="button" class="ghost" data-close="confirm">取消</button>
     <button type="button" class="primary" id="confirmOk">确定</button>

@@ -4,13 +4,14 @@ import {
   putFolder,
   updateNote,
   setNotesFolder,
+  deleteFolder,
   deleteFolderUnfav,
   markNotesPendingUnfav,
   getUnfavQueue,
   setUnfavQueue,
   clearAll
 } from "../db.js";
-import { classify, MAX_PER_RUN } from "../ai.js";
+import { classify, MAX_PER_RUN, isReservedFolderName } from "../ai.js";
 import { DEFAULT_DEEPSEEK_KEY, MAX_FOLDERS, loadLocalKey } from "../config.js";
 
 /* ---------------- 状态 ---------------- */
@@ -116,6 +117,9 @@ function backSheet() {
 }
 
 function closeSheets() {
+  /* 列表内展开的详情不是浮层：先收起来，免得它跟着一起被当成 sheet 处理 */
+  const d = $("#detail");
+  if (d && d.classList.contains("inline")) closeDetail();
   $$(".sheet.on").forEach((s) => s.classList.remove("on"));
   scrimEl.classList.remove("on");
   sheetBackTo = null;
@@ -148,19 +152,58 @@ $$("[data-close]").forEach((btn) => {
 /* 通用三选一：确认框 / 输入框 / 单选列表，全部返回 Promise */
 
 let pendingConfirm = null;
-function confirmBox({ title, html, okText = "确定", danger = false }) {
+/* 确认框。可选一个勾选项（check）：删文件夹时用它区分「只删壳」和「连收藏一起取消」。
+ * 勾不勾决定确定键写什么、是不是红的——默认那个动作不该看起来像危险操作。 */
+function confirmBox({
+  title,
+  html,
+  okText = "确定",
+  danger = false,
+  check = null,
+}) {
   $("#confirmTitle").textContent = title;
   $("#confirmBody").innerHTML = html;
+
+  const box = $("#confirmCheck");
+  if (check) {
+    box.hidden = false;
+    box.innerHTML =
+      `<label><input type="checkbox" id="confirmCheckBox"${
+        check.checked ? " checked" : ""
+      }><span>${check.label}</span></label>`;
+  } else {
+    box.hidden = true;
+    box.innerHTML = "";
+  }
+
   const ok = $("#confirmOk");
-  ok.textContent = okText;
-  ok.className = danger ? "primary danger-solid" : "primary";
+  const paintOk = () => {
+    const cb = $("#confirmCheckBox");
+    const on = !!(cb && cb.checked);
+    ok.textContent = (on && check && check.okText) || okText;
+    const hot = (on && check && check.danger) || danger;
+    ok.className = hot ? "primary danger-solid" : "primary";
+  };
+  paintOk();
+
   openSheetNow("#confirm");
+
+  /* 勾选状态变了，按钮文字和颜色立刻跟着变，不用关掉重开 */
+  const cbEl = $("#confirmCheckBox");
+  if (cbEl) cbEl.addEventListener("change", paintOk);
+
+  const isChecked = () => {
+    const cb = $("#confirmCheckBox");
+    return !!(cb && cb.checked);
+  };
+
   return new Promise((resolve) => {
     pendingConfirm = (val) => {
+      const checked = isChecked();
       pendingConfirm = null;
       $("#confirm").classList.remove("on");
       if (!document.querySelector(".modal.on")) scrimEl.classList.remove("on");
-      resolve(val);
+      resolve({ ok: !!val, checked });
     };
   });
 }
@@ -168,8 +211,11 @@ function confirmBox({ title, html, okText = "确定", danger = false }) {
 $("#confirmOk").addEventListener("click", () => pendingConfirm && pendingConfirm(true));
 
 let pendingNaming = null;
-function nameBox({ title, placeholder = "", value = "" }) {
+/* 同一个输入框服务两种动作：新建（确定键是「创建」）和修改（确定键是「修改」）。
+ * 按钮文字跟着场景走，别让「修改」最后按的是「创建」。 */
+function nameBox({ title, placeholder = "", value = "", okText = "创建" }) {
   $("#namingTitle").textContent = title;
+  $("#namingOk").textContent = okText;
   const input = $("#namingInput");
   input.placeholder = placeholder;
   input.value = value;
@@ -223,6 +269,14 @@ function pickBox({ title, options, current }) {
 $("#pickOk").addEventListener("click", () => {
   const sel = document.querySelector('input[name="pickf"]:checked');
   if (pendingPick) pendingPick(sel ? sel.value : null);
+});
+
+/* 移动文件夹也是「保存」：回车直接确定，不用挪鼠标去点 */
+$("#pick").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    $("#pickOk").click();
+  }
 });
 
 /* 弹窗层级高于 sheet，这里统一走 scrim */
@@ -295,6 +349,16 @@ function chipsTick(fn) {
 }
 
 function renderList() {
+  /* 展开的详情就挂在列表里，innerHTML 重写会把它一起冲掉：
+   * 先挪出去保命，渲染完再挂回原来那条下面。 */
+  const openEl = (() => {
+    const el = document.getElementById("detail");
+    if (!el) return null;
+    const live = el.classList.contains("on") && el.parentElement === listEl;
+    if (live) document.body.appendChild(el);
+    return live ? el : null;
+  })();
+
   const filtered = sortedNotes();
   const slice = filtered.slice(0, state.shown);
   if (!slice.length) {
@@ -316,10 +380,26 @@ function renderList() {
           n.liked ? " · 赞 " + esc(String(n.liked)) : ""
         }${fname ? `<span class="fol">${esc(fname)}</span>` : ""}</p>
           </div>
+          <span class="fold" aria-hidden="true"><svg viewBox="0 0 24 24" width="12" height="12"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>收起</span>
         </div>`;
       })
       .join("");
   }
+
+  if (openEl) {
+    const row = state.detailId
+      ? listEl.querySelector(`.item[data-id="${state.detailId}"]`)
+      : null;
+    if (row) {
+      row.after(openEl);
+      row.classList.add("open");
+      detailRowEl = row;
+    } else {
+      /* 这一条被移走/删掉了，详情跟着收起 */
+      closeDetail();
+    }
+  }
+
   moreEl.style.display = filtered.length > state.shown ? "block" : "none";
   countEl.textContent = filtered.length + " 条";
 }
@@ -390,6 +470,15 @@ function renderAll() {
 async function refresh(force) {
   try {
     let [notes, folders] = await Promise.all([getAllNotes(), getAllFolders()]);
+    /* 老版本可能被 AI 建出过真实的「未分类」文件夹（chip 栏会重复两个）。
+     * 这里就地并回兜底状态：里面的笔记回到未分类，文件夹壳删掉。
+     * 纯本地动作，不碰小红书。 */
+    if (folders.some((f) => isReservedFolderName(f.name))) {
+      for (const f of folders.filter((x) => isReservedFolderName(x.name))) {
+        await deleteFolder(f.id);
+      }
+      [notes, folders] = await Promise.all([getAllNotes(), getAllFolders()]);
+    }
     /* pendingUnfav = 已排队取消收藏、等后台逐条处理的条目：列表里不再显示，
      * 记录保留（要拿 token 打开笔记页），取消成功后由后台真删。 */
     notes = notes.filter((n) => !n.pendingUnfav);
@@ -437,35 +526,160 @@ listEl.addEventListener("click", (e) => {
   openDetail(id);
 });
 
+/* 详情不再另开一屏：直接在这条笔记下面展开，只放「所属文件夹」和「备注」两栏。
+ * 标题和封面在上面那一行已经看得到，重复一遍是视觉冗余。
+ * 点同一条、点「收起」、Esc 都收起，保存后自动收起。 */
+let detailRowEl = null;
+
+function closeDetail() {
+  const el = $("#detail");
+  el.classList.remove("on", "inline");
+  if (detailRowEl) detailRowEl.classList.remove("open");
+  detailRowEl = null;
+  state.detailId = null;
+  fsClose();
+  /* 放回 body，否则下次渲染列表会把它一起冲掉 */
+  if (el.parentElement && el.parentElement !== document.body) {
+    document.body.appendChild(el);
+  }
+}
+
 function openDetail(id) {
   const n = state.notes.find((x) => x.id === id);
   if (!n) return;
+
+  /* 同一条再点一次 = 收起 */
+  if (state.detailId === id && $("#detail").classList.contains("on")) {
+    closeDetail();
+    return;
+  }
+  closeDetail();
+
   state.detailId = id;
-  const img = $("#dCover");
-  if (n.cover) img.src = coverUrl(n.cover);
-  else img.removeAttribute("src");
-  $("#dTitle").textContent = n.title;
-  $("#dMeta").textContent =
-    (n.author || "未知作者") + (n.liked ? " · 赞 " + n.liked : "");
-  const opts = [`<option value="">未分类</option>`].concat(
-    state.folders.map(
-      (f) => `<option value="${esc(f.id)}">${esc(f.name)}</option>`
+  const current = n.folder || "";
+  $("#dFolder").value = current;
+  const items = [{ id: "", name: "未分类" }].concat(state.folders);
+  $("#dFolderList").innerHTML = items
+    .map(
+      (f) =>
+        `<button type="button" class="fs-opt${f.id === current ? " on" : ""}" role="option" ` +
+        `data-id="${esc(f.id)}" aria-selected="${f.id === current}">${esc(f.name)}</button>`
     )
-  );
-  $("#dFolder").innerHTML = opts.join("");
-  $("#dFolder").value = n.folder || "";
+    .join("");
+  $("#dFolderLabel").textContent =
+    (items.find((f) => f.id === current) || items[0]).name;
   $("#dNote").value = n.note || "";
-  openSheet($("#detail"));
+  $("#dNote").placeholder = NOTE_PLACEHOLDER;
+
+  /* 插到这一条下面，而不是盖住整屏 */
+  const row = listEl.querySelector(`.item[data-id="${id}"]`);
+  if (row) {
+    row.after($("#detail"));
+    row.classList.add("open");
+    detailRowEl = row;
+  }
+  $("#detail").classList.add("on", "inline");
+  if (detailRowEl && typeof $("#detail").scrollIntoView === "function") {
+    try {
+      $("#detail").scrollIntoView({ block: "nearest" });
+    } catch (e) {
+      /* 老内核不认 options，忽略 */
+    }
+  }
 }
 
-$("#detailBack").addEventListener("click", closeSheets);
+/* 所属文件夹：自定义下拉（原生 select 的悬停蓝色和直角用 CSS 改不掉，只能自己画） */
+const fsEl = $("#dFolderSel");
+const fsBtn = $("#dFolderBtn");
+const fsList = $("#dFolderList");
+
+function fsClose() {
+  fsList.hidden = true;
+  fsBtn.setAttribute("aria-expanded", "false");
+}
+
+function fsOpen() {
+  fsList.hidden = false;
+  fsBtn.setAttribute("aria-expanded", "true");
+  const on = fsList.querySelector(".fs-opt.on");
+  if (on) on.scrollIntoView({ block: "nearest" });
+}
+
+fsBtn.addEventListener("click", () => {
+  if (fsList.hidden) fsOpen();
+  else fsClose();
+});
+
+fsList.addEventListener("click", (e) => {
+  const opt = e.target.closest(".fs-opt");
+  if (!opt) return;
+  $("#dFolder").value = opt.dataset.id;
+  $("#dFolderLabel").textContent = opt.textContent;
+  fsList.querySelectorAll(".fs-opt").forEach((o) => {
+    o.classList.toggle("on", o === opt);
+    o.setAttribute("aria-selected", o === opt ? "true" : "false");
+  });
+  fsClose();
+});
+
+/* 点别处 / Esc 收起；上下键在选项间移动（选项是 button，Enter/空格天然触发选中） */
+document.addEventListener("click", (e) => {
+  if (!fsList.hidden && !fsEl.contains(e.target)) fsClose();
+});
+
+fsEl.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    fsClose();
+    fsBtn.focus();
+    return;
+  }
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault();
+  if (fsList.hidden) {
+    fsOpen();
+    return;
+  }
+  const opts = Array.from(fsList.querySelectorAll(".fs-opt"));
+  if (!opts.length) return;
+  const i = opts.indexOf(document.activeElement);
+  const j =
+    e.key === "ArrowDown" ? Math.min(i + 1, opts.length - 1) : Math.max(i - 1, 0);
+  (opts[j] || opts[0]).focus();
+});
+
+/* 备注提示语：颜色调浅（见 CSS），一出现光标就收起来——
+ * 否则那行灰字看着像「已经写好的备注」，容易让人以为存过了。 */
+const NOTE_PLACEHOLDER = $("#dNote").getAttribute("placeholder") || "";
+$("#dNote").addEventListener("focus", () => {
+  $("#dNote").placeholder = "";
+});
+$("#dNote").addEventListener("blur", () => {
+  if (!$("#dNote").value.trim()) $("#dNote").placeholder = NOTE_PLACEHOLDER;
+});
+
+/* 备注：Enter 直接保存（Shift+Enter 换行；中文输入法组词中的 Enter 不触发） */
+$("#dNote").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    $("#dSave").click();
+  }
+});
+
+/* 收起靠这三条路：再点这条笔记、按 Esc、保存完自动收。
+ * 展开块里不再放「收起」按钮——它压在「所属文件夹」那行右边，看着像属于那里。 */
+
+/* Esc 收起展开的详情 */
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && $("#detail").classList.contains("inline")) closeDetail();
+});
 
 $("#dSave").addEventListener("click", async () => {
   if (!state.detailId) return;
   const folder = $("#dFolder").value || null;
   const note = $("#dNote").value.trim();
-  await updateNote(state.detailId, { folder, note });
-  closeSheets();
+  const id = state.detailId;
+  await updateNote(id, { folder, note });
+  closeDetail();
   await refresh(true);
   toast("已保存");
 });
@@ -479,7 +693,7 @@ $("#dOpen").addEventListener("click", () => {
 $("#dUnfav").addEventListener("click", async () => {
   const n = state.notes.find((x) => x.id === state.detailId);
   if (!n) return;
-  const ok = await confirmBox({
+  const { ok } = await confirmBox({
     title: "取消收藏这条？",
     html: `「${esc(n.title)}」<br><br>` +
       `① 插件里：这条收藏<b>立即移除</b>；<br>` +
@@ -550,7 +764,7 @@ selbarEl.addEventListener("click", async (e) => {
 
   if (act === "unfav") {
     if (!ids.length) return toast("先勾选几条");
-    const ok = await confirmBox({
+    const { ok } = await confirmBox({
       title: `取消收藏 ${ids.length} 条？`,
       html: `① 插件里：这 <b>${ids.length}</b> 条<b>立即移除</b>；<br>` +
         `② 小红书：排队<b>逐条取消收藏</b>（每条间隔几秒慢速执行，防风控），进度看红色进度条。<br><br>` +
@@ -657,7 +871,7 @@ $("#menu").addEventListener("click", async (e) => {
   if (act === "settings") return openSettings();
 
   if (act === "clear") {
-    const ok = await confirmBox({
+    const { ok } = await confirmBox({
       title: "清空本地数据",
       html: `这会删掉本插件里的 <b>${state.notes.length}</b> 条收藏和所有文件夹。<br>只影响插件，<b>不动小红书</b>；需要时重新采集即可。`,
       okText: "清空",
@@ -693,7 +907,7 @@ function openFolders() {
         <div class="num">${c} 条</div>
       </div>
       <div class="ops">
-        <button type="button" data-op="rename">改名</button>
+        <button type="button" data-op="rename">修改</button>
         <button type="button" class="del" data-op="del">删除</button>
       </div>
     </div>`;
@@ -713,6 +927,8 @@ $("#folderNew").addEventListener("click", async () => {
   }
   const name = await nameBox({ title: "新建文件夹", placeholder: "比如「装修灵感」" });
   if (!name) return;
+  if (isReservedFolderName(name))
+    return toast("「未分类」是系统自带的兜底分类，不用手动建", 2600);
   if (state.folders.some((f) => f.name === name)) return toast("已有同名文件夹");
   await putFolder({ id: "f" + Date.now().toString(36), name, createdAt: Date.now() });
   await refresh(true);
@@ -730,31 +946,65 @@ $("#folderList").addEventListener("click", async (e) => {
   const count = state.notes.filter((n) => n.folder === id).length;
 
   if (btn.dataset.op === "rename") {
-    const name = await nameBox({ title: "重命名文件夹", value: folder.name });
-    if (!name || name === folder.name) return;
+    const name = await nameBox({
+      title: "修改文件夹名",
+      value: folder.name,
+      okText: "完成",
+    });
+    if (!name) return;
+    if (name === folder.name) return toast("名字没有变化");
+    if (isReservedFolderName(name))
+      return toast("「未分类」是系统自带的兜底分类，换个名字", 2600);
+    if (state.folders.some((f) => f.id !== id && f.name === name))
+      return toast("已有同名文件夹");
     await putFolder(Object.assign({}, folder, { name }));
     await refresh(true);
     openFolders();
+    toast("修改成功");
     return;
   }
 
-  const ok = await confirmBox({
+  const { ok, checked } = await confirmBox({
     title: `删除「${folder.name}」`,
-    html: `里面有 <b>${count}</b> 条收藏。确认后两件事一起发生：<br><br>` +
-      `① 插件里：文件夹和这 <b>${count}</b> 条收藏立即隐藏；<br>` +
-      `② 小红书：后台逐条<b>打开笔记页点「取消收藏」</b>（完全模拟真人操作，安全）。<br><br>` +
-      `每条要几秒钟，中途失败会立即停止；<b>没取消成功的记录会保留</b>，随时可续跑。`,
-    okText: "删除并取消收藏",
-    danger: true
+    html:
+      `这个文件夹里有 <b>${count}</b> 条收藏。<br><br>` +
+      `默认<b>只删文件夹</b>：里面的收藏回到「未分类」，小红书上的收藏原样不动。` +
+      (count
+        ? `<br><br>要连小红书上的收藏一起清掉，勾选下面的选项。`
+        : ""),
+    okText: "只删文件夹",
+    check: count
+      ? {
+          label: `同时取消收藏这 ${count} 条（在小红书逐条点「取消收藏」，每条几秒）`,
+          okText: "删除并取消收藏",
+          danger: true,
+        }
+      : null,
   });
   if (!ok) return;
-  /* 标记待取消（列表立即隐藏、记录保留供打开笔记页用），返回笔记 id 排队 */
-  const res = await deleteFolderUnfav(id);
-  const removedIds = (res && res.ids) || [];
+
   if (state.view === id) {
     state.view = "all";
     state.shown = 60;
   }
+
+  /* ① 只删文件夹：壳删掉，笔记回「未分类」，不碰小红书 */
+  if (!checked) {
+    await deleteFolder(id);
+    await refresh(true);
+    openFolders();
+    toast(
+      count
+        ? `已删除「${folder.name}」，${count} 条收藏回到「未分类」`
+        : `已删除「${folder.name}」（里面是空的）`,
+      2600
+    );
+    return;
+  }
+
+  /* ② 连收藏一起取消：标记待取消（列表立即隐藏、记录保留供打开笔记页用），返回笔记 id 排队 */
+  const res = await deleteFolderUnfav(id);
+  const removedIds = (res && res.ids) || [];
   /* 进「待取消收藏」队列（持久化，重启不丢），去重合并 */
   if (removedIds.length) {
     const q = await getUnfavQueue();
@@ -975,6 +1225,62 @@ $("#keyClear").addEventListener("click", async () => {
   toast("Key 已清空");
 });
 
+/* Key 也是「保存」：回车直接存 */
+$("#keyInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.isComposing) {
+    e.preventDefault();
+    $("#keySave").click();
+  }
+});
+
+/* ---------- 外观：浅色 / 深色，两档自选 ----------
+ * 不做「跟随系统」：Chrome 在 Windows 上跟的是「应用模式」，系统深色但
+ * Chrome 报 light 时媒体查询压根不触发，用户只会觉得坏了一半。
+ * 现在由 <html data-theme> 驱动，默认浅色，选哪档就是哪档。 */
+const THEME_STORE = "theme";
+const THEME_LS = "xhsfav-theme";
+const THEME_MODES = ["light", "dark"];
+const THEME_DEFAULT = "light";
+
+let themeMode = THEME_DEFAULT;
+
+function paintTheme(mode) {
+  themeMode = THEME_MODES.indexOf(mode) >= 0 ? mode : THEME_DEFAULT;
+  document.documentElement.setAttribute("data-theme", themeMode);
+  /* localStorage 放一份镜像：首屏前的内联脚本要同步读，chrome.storage 是异步的 */
+  try {
+    localStorage.setItem(THEME_LS, themeMode);
+  } catch (e) {}
+  $$("#themeSeg button").forEach((b) =>
+    b.classList.toggle("on", b.dataset.theme === themeMode)
+  );
+}
+
+async function setTheme(mode) {
+  paintTheme(mode);
+  try {
+    if (hasKeyStore()) await chrome.storage.local.set({ [THEME_STORE]: themeMode });
+  } catch (e) {}
+}
+
+async function loadTheme() {
+  let mode = THEME_DEFAULT;
+  try {
+    if (hasKeyStore()) {
+      const got = await chrome.storage.local.get(THEME_STORE);
+      /* 老版本存过 system，这里归一成浅色 */
+      if (got && THEME_MODES.indexOf(got[THEME_STORE]) >= 0) mode = got[THEME_STORE];
+    }
+  } catch (e) {}
+  paintTheme(mode);
+}
+
+$$("#themeSeg button").forEach((b) =>
+  b.addEventListener("click", () => setTheme(b.dataset.theme))
+);
+
+loadTheme();
+
 $("#aiBack").addEventListener("click", () => {
   if (aiCtrl) aiCtrl.abort();
   backSheet();
@@ -1157,6 +1463,8 @@ aiConfirmEl.addEventListener("click", async () => {
       byFolder.get(fid).push(c.dataset.id);
     } else {
       const name = c.dataset.new;
+      /* 兜底：AI 结果里就算混进了「未分类」，也只当没有建议，绝不建同名文件夹 */
+      if (isReservedFolderName(name)) continue;
       if (!byNew.has(name)) byNew.set(name, []);
       byNew.get(name).push(c.dataset.id);
     }
@@ -1200,13 +1508,14 @@ aiConfirmEl.addEventListener("click", async () => {
 
 /* ---------------- 采集 ---------------- */
 
-/* 默认采 1000 条（旧版是 100）；点菜单的「开始采集」先选条数，选过就记住。
+/* 点菜单的「开始采集」先选条数：四档没有默认，第一次打开不预选，点哪档跑哪档；
+ * 选过之后记住上一次的选择（只做高亮提示，不点不会开跑）。
  * 上限 5000 是拍出来的：再大这一屏的收藏页也刷不完，而且滚动太久易掉线。 */
 const COLLECT_DEFAULT = 1000;
 const COLLECT_MIN = 20;
 const COLLECT_MAX = 5000;
 const TARGET_STORE = "collectTarget";
-let collectTarget = COLLECT_DEFAULT;
+let collectTarget = null;
 
 function clampTarget(v) {
   const n = Math.round(Number(v) || 0);

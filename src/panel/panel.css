@@ -922,6 +922,99 @@ body.picking .item .tick {
   box-shadow: 0 0 0 3px #fff1f3;
 }
 
+.field .hint {
+  display: block;
+  font-style: normal;
+  font-size: 11px;
+  color: #b3b8bf;
+  margin-top: 6px;
+}
+
+/* ---------- 所属文件夹下拉（自定义，替代原生 select） ---------- */
+
+.folder-select {
+  position: relative;
+}
+
+.folder-select-btn {
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  border: 1px solid #e3e5e8;
+  background: #fff;
+  color: inherit;
+  outline: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.folder-select-btn svg {
+  flex: none;
+  color: #9aa0a6;
+  transition: transform 0.15s;
+}
+
+.folder-select-btn[aria-expanded="true"] svg {
+  transform: rotate(180deg);
+}
+
+.folder-select-btn:focus-visible {
+  border-color: #ffc2cb;
+  box-shadow: 0 0 0 3px #fff1f3;
+}
+
+.folder-select-list {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  background: #fff;
+  border: 1px solid #eef0f2;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(31, 35, 41, 0.1);
+  padding: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.fs-opt {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fs-opt:hover,
+.fs-opt:focus-visible {
+  background: #fff1f3;
+  color: #ff2442;
+  outline: none;
+}
+
+.fs-opt.on {
+  color: #ff2442;
+  font-weight: 500;
+}
+
+.fs-opt.on::after {
+  content: "✓";
+  float: right;
+}
+
 /* ---------- 文件夹管理 ---------- */
 
 .folder-list {
@@ -1134,6 +1227,42 @@ button.primary:hover {
   color: #1f2329;
 }
 
+/* 确认框里的勾选项：默认动作不干危险事，勾了才升级成红色那条路 */
+.confirm-check {
+  margin-top: 12px;
+}
+
+.confirm-check label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border: 1px solid #eef0f2;
+  border-radius: 9px;
+  background: #fafbfc;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #5d636b;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+}
+
+.confirm-check input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 3px 0 0;
+  padding: 0;
+  accent-color: #ff2442;
+  cursor: pointer;
+}
+
+.confirm-check label:has(input:checked) {
+  border-color: #ffd0d8;
+  background: #fff7f8;
+  color: #b3122b;
+}
+
 /* ---------- AI 归类 ---------- */
 
 .ai-desc {
@@ -1320,4 +1449,680 @@ button.primary[disabled] {
 .toast.on {
   opacity: 1;
   transform: translate(-50%, 0);
+}
+
+/* ================================================================
+   备注提示语
+   提示语只是「范例」，不是已经写好的内容：
+   颜色压到很浅，光标一进去就撤掉（JS 里 focus 时清空 placeholder）。
+   ================================================================ */
+
+.field textarea::placeholder {
+  color: #c9ced4;
+  opacity: 1;
+}
+
+/* ================================================================
+   详情：不再另开一屏，直接在条目下面展开
+   （浮层那套 .sheet 样式完全不动，这里只加 .inline 变体）
+   ================================================================ */
+
+.sheet.inline {
+  position: relative;
+  transform: none;
+  max-width: none;
+  width: auto;
+  z-index: 1;
+  box-shadow: none;
+  border-left: 2px solid #ff2442;
+  border-bottom: 1px solid #f3f4f5;
+  background: #fcfcfd;
+}
+
+/* 「收起」跟着笔记本身走：展开的那一条右端显示，而不是飘在下拉框那行右边 */
+.item .fold {
+  display: none;
+  flex: 0 0 auto;
+  align-self: center;
+  align-items: center;
+  gap: 2px;
+  padding-left: 4px;
+  font-size: 11px;
+  line-height: 1;
+  color: #9aa0a6;
+  transition: color 0.15s;
+}
+
+.item.open .fold {
+  display: inline-flex;
+}
+
+.item.open:hover .fold {
+  color: #ff2442;
+}
+
+body.picking .item .fold {
+  display: none;
+}
+
+/* 只留两栏（文件夹 / 备注）：标题封面在上面那行已经有了，不再重复 */
+.sheet.inline .sheet-body {
+  flex: none;
+  overflow: visible;
+  padding: 10px 16px 0;
+}
+
+.sheet.inline .field:first-of-type {
+  margin-top: 2px;
+}
+
+.sheet.inline .field {
+  margin-bottom: 10px;
+}
+
+.sheet.inline .field textarea {
+  height: 56px;
+  min-height: 56px;
+  resize: none;
+}
+
+.sheet.inline .sheet-foot {
+  padding: 6px 16px 12px;
+  border-top: 0;
+}
+
+.sheet.inline.on {
+  transform: none;
+}
+
+.item.open {
+  background: #fcfcfd;
+}
+
+/* ================================================================
+   深色模式
+   由 <html data-theme="dark"> 触发：panel.html 头部的内联脚本在首屏前
+   就把属性写好（不闪白），panel.js 负责「浅色 / 深色」两档自选。
+   不用 @media (prefers-color-scheme)：Chrome 在 Windows 上只跟
+   「应用模式」，系统深色但 Chrome 报 light 时媒体查询压根不触发。
+   ================================================================ */
+
+html[data-theme="light"] {
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+html[data-theme="dark"] body {
+  color: #e9eaec;
+  background: #16171a;
+}
+
+/* ---------- 头部 / 状态 ---------- */
+
+html[data-theme="dark"] .count {
+  background: rgba(255, 36, 66, 0.16);
+}
+
+html[data-theme="dark"] .mini {
+  border-color: #3a3e44;
+  background: #202226;
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .mini:hover {
+  border-color: #7a3040;
+}
+
+html[data-theme="dark"] .status {
+  color: #8b9096;
+}
+
+html[data-theme="dark"] .status::before {
+  background: #4a4f56;
+}
+
+/* ---------- AI 进度条（蓝紫） ---------- */
+
+html[data-theme="dark"] .aiprog {
+  background: rgba(122, 122, 246, 0.1);
+  border-color: #3a3a5e;
+}
+
+html[data-theme="dark"] .aiprog-head {
+  color: #b9b9e6;
+}
+
+html[data-theme="dark"] .aiprog-head button {
+  border-color: #43436b;
+  background: #22242a;
+  color: #a3a3f7;
+}
+
+html[data-theme="dark"] .aiprog-bar {
+  background: rgba(122, 122, 246, 0.18);
+}
+
+html[data-theme="dark"] .aiprog-bar > i {
+  background: #8f8ff2;
+}
+
+/* ---------- 筛选 chips ---------- */
+
+html[data-theme="dark"] .chipnav {
+  color: #a0a6ad;
+}
+
+html[data-theme="dark"] .chipnav.l {
+  background: linear-gradient(to right, #16171a 0, #16171a 45%, rgba(22, 23, 26, 0) 100%);
+}
+
+html[data-theme="dark"] .chipnav.r {
+  background: linear-gradient(to left, #16171a 0, #16171a 45%, rgba(22, 23, 26, 0) 100%);
+}
+
+html[data-theme="dark"] .chip {
+  border-color: #33373d;
+  background: #25282c;
+  color: #b7bbc1;
+}
+
+html[data-theme="dark"] .chip:hover {
+  border-color: #7a3040;
+}
+
+html[data-theme="dark"] .chip.new {
+  background: #202226;
+  color: #8b9096;
+}
+
+/* ---------- 提示条 / 同步条 ---------- */
+
+html[data-theme="dark"] .tipbar {
+  background: rgba(255, 196, 66, 0.1);
+  border-color: #574a22;
+  color: #e2c074;
+}
+
+html[data-theme="dark"] .tipbar .go {
+  color: #f0c96a;
+}
+
+html[data-theme="dark"] .tipbar .x {
+  color: #9a8552;
+}
+
+html[data-theme="dark"] .syncbar {
+  background: rgba(255, 36, 66, 0.1);
+  border-color: #65303a;
+  color: #ff9aa5;
+}
+
+html[data-theme="dark"] .syncbar .hint {
+  color: #d98b95;
+}
+
+html[data-theme="dark"] .syncbar .err {
+  color: #ff6b7d;
+}
+
+html[data-theme="dark"] .syncbar .bar {
+  background: rgba(255, 36, 66, 0.22);
+}
+
+html[data-theme="dark"] .syncbar .go {
+  color: #ff5c6e;
+}
+
+html[data-theme="dark"] .syncbar .x {
+  color: #8a5c62;
+}
+
+/* ---------- 搜索 ---------- */
+
+html[data-theme="dark"] .search input {
+  background: #25282c;
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .search input::placeholder {
+  color: #6f757b;
+}
+
+html[data-theme="dark"] .search input:focus {
+  background: #1c1e22;
+  border-color: #7a3040;
+  box-shadow: 0 0 0 3px rgba(255, 36, 66, 0.16);
+}
+
+/* ---------- 列表 ---------- */
+
+html[data-theme="dark"] .list {
+  border-top-color: #26292d;
+  scrollbar-color: #3a3e44 transparent;
+}
+
+html[data-theme="dark"] .list::-webkit-scrollbar-thumb {
+  background: #3a3e44;
+}
+
+html[data-theme="dark"] .list:empty::after {
+  color: #6f757b;
+}
+
+html[data-theme="dark"] .item {
+  border-bottom-color: #26292d;
+}
+
+html[data-theme="dark"] .item:hover {
+  background: #1e2024;
+}
+
+html[data-theme="dark"] .item.sel {
+  background: rgba(255, 36, 66, 0.1);
+}
+
+html[data-theme="dark"] .item.open {
+  background: #1e2024;
+}
+
+html[data-theme="dark"] .item .fold {
+  color: #868c94;
+}
+
+html[data-theme="dark"] .item.open:hover .fold {
+  color: #ff5c74;
+}
+
+html[data-theme="dark"] .item .tick {
+  border-color: #4a4f56;
+  background: #202226;
+}
+
+html[data-theme="dark"] .cover {
+  background: #26292d;
+}
+
+html[data-theme="dark"] .meta {
+  color: #8b9096;
+}
+
+html[data-theme="dark"] .fol {
+  background: #2c3036;
+  color: #b7bbc1;
+}
+
+html[data-theme="dark"] .more {
+  color: #6f757b;
+  border-top-color: #26292d;
+}
+
+html[data-theme="dark"] .empty-hint {
+  color: #6f757b;
+}
+
+/* ---------- 多选操作条 ---------- */
+
+html[data-theme="dark"] .selbar {
+  background: #26292d;
+}
+
+html[data-theme="dark"] .scrim {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- 浮层 ---------- */
+
+html[data-theme="dark"] .sheet {
+  background: #1b1d21;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
+}
+
+html[data-theme="dark"] .sheet.inline {
+  background: #1c1e22;
+  border-bottom-color: #26292d;
+}
+
+html[data-theme="dark"] .sheet-head {
+  border-bottom-color: #2c3036;
+}
+
+html[data-theme="dark"] .sheet-head .link.back {
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .sheet-head .link.back:hover {
+  background: #2c3036;
+}
+
+html[data-theme="dark"] .sheet-head .link.back:active {
+  background: #363a40;
+}
+
+html[data-theme="dark"] .sheet-foot {
+  border-top-color: #2c3036;
+}
+
+html[data-theme="dark"] .menu-item {
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .menu-item:hover {
+  background: #25282c;
+}
+
+html[data-theme="dark"] .menu-item small {
+  color: #6f757b;
+}
+
+html[data-theme="dark"] .menu-item.danger {
+  color: #ff7a59;
+}
+
+html[data-theme="dark"] .d-note {
+  border-bottom-color: #2c3036;
+}
+
+html[data-theme="dark"] .sheet.inline .d-note {
+  border-bottom-color: #2c3036;
+}
+
+/* ---------- 采集条数 ---------- */
+
+html[data-theme="dark"] .target-grid button {
+  border-color: #3a3e44;
+  background: #202226;
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .target-grid button small {
+  color: #8b9096;
+}
+
+html[data-theme="dark"] .target-grid button:hover {
+  border-color: #7a3040;
+}
+
+html[data-theme="dark"] .target-grid button.on {
+  background: rgba(255, 36, 66, 0.14);
+}
+
+/* ---------- 表单 ---------- */
+
+html[data-theme="dark"] .field > span {
+  color: #8b9096;
+}
+
+html[data-theme="dark"] .field select,
+html[data-theme="dark"] .field textarea,
+html[data-theme="dark"] .field input[type="password"],
+html[data-theme="dark"] .field input[type="text"],
+html[data-theme="dark"] .folder-select-btn {
+  border-color: #3a3e44;
+  background: #202226;
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .field select:focus,
+html[data-theme="dark"] .field textarea:focus,
+html[data-theme="dark"] .field input:focus,
+html[data-theme="dark"] .folder-select-btn:focus-visible {
+  border-color: #7a3040;
+  box-shadow: 0 0 0 3px rgba(255, 36, 66, 0.16);
+}
+
+html[data-theme="dark"] .field textarea::placeholder {
+  color: #5b6067;
+}
+
+html[data-theme="dark"] .field .hint,
+html[data-theme="dark"] .hint {
+  color: #6f757b;
+}
+
+html[data-theme="dark"] .folder-select-btn svg {
+  color: #8b9096;
+}
+
+html[data-theme="dark"] .folder-select-list {
+  background: #22242a;
+  border-color: #33373d;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55);
+}
+
+html[data-theme="dark"] .fs-opt:hover,
+html[data-theme="dark"] .fs-opt:focus-visible {
+  background: rgba(255, 36, 66, 0.14);
+}
+
+/* ---------- 文件夹管理 ---------- */
+
+html[data-theme="dark"] .folder-row {
+  border-color: #33373d;
+}
+
+html[data-theme="dark"] .folder-row .num {
+  color: #8b9096;
+}
+
+html[data-theme="dark"] .folder-row .ops button {
+  border-color: #3a3e44;
+  background: #202226;
+  color: #b7bbc1;
+}
+
+html[data-theme="dark"] .folder-row .ops button.del {
+  color: #ff7a59;
+  border-color: #5b382c;
+}
+
+/* ---------- 按钮 ---------- */
+
+html[data-theme="dark"] button.ghost {
+  border-color: #3a3e44;
+  background: #202226;
+  color: #b7bbc1;
+}
+
+html[data-theme="dark"] button.ghost:hover {
+  border-color: #7a3040;
+}
+
+html[data-theme="dark"] button.ghost.warn {
+  color: #ff7a59;
+  border-color: #5b382c;
+}
+
+html[data-theme="dark"] button.ghost.warn:hover {
+  background: rgba(255, 122, 89, 0.12);
+}
+
+/* ---------- 弹窗 ---------- */
+
+html[data-theme="dark"] .modal {
+  background: #1f2124;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+}
+
+html[data-theme="dark"] .modal h2 {
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .modal input {
+  border-color: #3a3e44;
+  background: #202226;
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .modal input:focus {
+  border-color: #7a3040;
+  box-shadow: 0 0 0 3px rgba(255, 36, 66, 0.16);
+}
+
+html[data-theme="dark"] .pick-body label {
+  border-color: #33373d;
+}
+
+html[data-theme="dark"] .pick-body label:hover {
+  background: #25282c;
+}
+
+html[data-theme="dark"] .confirm-body,
+html[data-theme="dark"] .ai-desc {
+  color: #b7bbc1;
+}
+
+html[data-theme="dark"] .confirm-body b,
+html[data-theme="dark"] .ai-desc b {
+  color: #e9eaec;
+}
+
+html[data-theme="dark"] .confirm-check label {
+  border-color: #2b2e33;
+  background: #202226;
+  color: #b7bbc1;
+}
+
+html[data-theme="dark"] .confirm-check label:has(input:checked) {
+  border-color: rgba(255, 36, 66, 0.38);
+  background: rgba(255, 36, 66, 0.1);
+  color: #ff9aa5;
+}
+
+/* ---------- AI 归类结果 ---------- */
+
+html[data-theme="dark"] .ai-bar {
+  background: #2c3036;
+}
+
+html[data-theme="dark"] .sug {
+  border-color: #33373d;
+}
+
+html[data-theme="dark"] .sug:hover {
+  background: #25282c;
+}
+
+html[data-theme="dark"] .sug:has(input:checked) {
+  border-color: #7a3040;
+  background: rgba(255, 36, 66, 0.1);
+}
+
+html[data-theme="dark"] .sug.none,
+html[data-theme="dark"] .sug.none:hover {
+  background: #25282c;
+}
+
+html[data-theme="dark"] .sug .m {
+  color: #8b9096;
+}
+
+html[data-theme="dark"] .sug.none .m {
+  color: #6f757b;
+}
+
+/* ---------- toast ---------- */
+
+html[data-theme="dark"] .toast {
+  background: rgba(58, 62, 68, 0.96);
+  color: #f2f3f5;
+}
+
+/* ================================================================
+   设置里的「外观」三档（跟随系统 / 浅色 / 深色）
+   ================================================================ */
+
+.seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+}
+
+.seg button {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 8px 4px;
+  border-radius: 9px;
+  border: 1px solid #e3e5e8;
+  background: #fff;
+  color: #5d636b;
+  cursor: pointer;
+  transition: border-color 0.15s, background-color 0.15s, color 0.15s;
+}
+
+.seg button:hover {
+  border-color: #ffb3bd;
+  color: #ff2442;
+}
+
+.seg button.on {
+  border-color: #ff2442;
+  background: #fff1f3;
+  color: #ff2442;
+  font-weight: 600;
+}
+
+html[data-theme="dark"] .seg button {
+  border-color: #3a3e44;
+  background: #202226;
+  color: #b7bbc1;
+}
+
+html[data-theme="dark"] .seg button:hover {
+  border-color: #7a3040;
+  color: #ff8a99;
+}
+
+html[data-theme="dark"] .seg button.on {
+  border-color: #ff2442;
+  background: rgba(255, 36, 66, 0.16);
+  color: #ff8a99;
+}
+
+/* ---------- 状态色：选中 / 进行中的红 ----------
+   深色基础规则都带 html[data-theme] 前缀，权重比浅色里的 .x.on 高一层，
+   所以这些「状态」必须在深色里重新声明，否则选中态会一起变灰。 */
+
+html[data-theme="dark"] .mini.on,
+html[data-theme="dark"] .chip.on {
+  border-color: #ff2442;
+  background: #ff2442;
+  color: #fff;
+}
+
+html[data-theme="dark"] .status.live::before {
+  background: #ff2442;
+}
+
+html[data-theme="dark"] .syncbar .bar i,
+html[data-theme="dark"] .ai-bar i {
+  background: #ff2442;
+}
+
+html[data-theme="dark"] .item.sel .tick {
+  background: #ff2442;
+  border-color: #ff2442;
+}
+
+html[data-theme="dark"] .item.sel .tick::after {
+  border-color: #fff;
+}
+
+html[data-theme="dark"] .fs-opt.on {
+  color: #ff8a99;
+}
+
+html[data-theme="dark"] .fs-opt:hover,
+html[data-theme="dark"] .fs-opt:focus-visible {
+  color: #ff8a99;
+}
+
+html[data-theme="dark"] .sug .m b {
+  color: #ff8a99;
+}
+
+html[data-theme="dark"] .chipnav:hover {
+  color: #ff8a99;
 }

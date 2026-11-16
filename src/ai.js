@@ -33,6 +33,15 @@ export function tierOf(conf) {
 
 /* ---------- 第一步：规划文件夹 ---------- */
 
+/* 「未分类」不是文件夹，是没归属时的兜底状态（它一直在 chip 栏第二位）。
+ * 模型经常把它当成一个文件夹返回，一旦落地就会多出一个同名的真文件夹，
+ * chip 栏里出现两个「未分类」——这里统一挡掉。 */
+export const RESERVED_FOLDER_NAMES = ["未分类", "未归类"];
+
+export function isReservedFolderName(name) {
+  return RESERVED_FOLDER_NAMES.includes(String(name == null ? "" : name).trim());
+}
+
 export function buildPlanMessages(notes, folders) {
   const slots = Math.max(0, MAX_FOLDERS - folders.length);
   const existing = folders.length
@@ -52,7 +61,7 @@ export function buildPlanMessages(notes, folders) {
         (slots ? `，其中最多新增 ${slots} 个` : "——现有文件夹已满上限，只能全部复用现有名字") +
         "；\n" +
         "3) 每个名字不超过 6 个字、概括一类内容、彼此不重叠；宁少勿多，类目太多反而难用；\n" +
-        "4) 实在归不进去的内容留给「未分类」，不要为它们硬造类目。"
+        "4) 「未分类」不是文件夹、不要写进清单；归不进去的内容不要为它们硬造类目。"
     },
     {
       role: "user",
@@ -96,7 +105,7 @@ export function parsePlan(content, folders) {
       .replace(/[「」『』《》"'“”【】:：]/g, "")
       .trim()
       .slice(0, 12);
-    if (!name || existing.has(name) || out.includes(name)) continue;
+    if (!name || isReservedFolderName(name) || existing.has(name) || out.includes(name)) continue;
     out.push(name);
   }
   return out;
@@ -175,14 +184,19 @@ export function parseSuggestions(content, notes, folders) {
     let newFolder = null;
     if (rawName != null && String(rawName).trim() && String(rawName).trim() !== "null") {
       let key = String(rawName).trim();
-      /* 建议 new: 名字 —— 去掉前缀和装饰字符 */
-      if (/^new[:：]/i.test(key)) {
+      /* 「未分类」= 有意留在兜底状态，直接当作没有建议，绝不能变成新建文件夹 */
+      if (isReservedFolderName(key.replace(/[「」『』《》"'“”【】:：]/g, "").trim())) {
+        key = "";
+      }
+      if (!key) {
+        /* 落到下面的兜底：folder / newFolder 都保持 null */
+      } else if (/^new[:：]/i.test(key)) {
         const proposed = key
           .replace(/^new[:：]/i, "")
           .replace(/[「」『』《》"'“”【】:：]/g, "")
           .trim()
           .slice(0, 12);
-        if (proposed) {
+        if (proposed && !isReservedFolderName(proposed)) {
           const hit = byName.get(proposed);
           if (hit) {
             const r = resolve(hit);
