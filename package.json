@@ -1,6 +1,6 @@
 {
   "name": "xhs-plugin",
-  "version": "0.2.0",
+  "version": "0.3.2",
   "private": true,
   "description": "小红书收藏库 —— Chrome / Edge MV3 扩展：本机归类、备注、搜索、导出 CSV",
   "license": "MIT",
